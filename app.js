@@ -710,7 +710,16 @@ setInterval(() => { if (!pendingHide.size && $('#sheetWrap').hidden) renderHeade
 
 /* ---------- Offline (Service Worker) ---------- */
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => { });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    reg.update().catch(() => { });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => { }); });
+  }).catch(() => { });
+  // Neue Version aktiv → einmal neu laden, damit sie sofort sichtbar ist
+  let reloaded = false; const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded || !hadController) return; reloaded = true;
+    if ($('#sheetWrap').hidden && $('#voice').hidden) location.reload();
+  });
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
 
