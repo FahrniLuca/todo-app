@@ -113,13 +113,8 @@ function addFromVoice(text) {
 
 /* ---------- Sprachausgabe (ohne aufs Handy zu schauen) ---------- */
 function speak(text) {
-  try {
-    if (!('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text); u.lang = 'de-DE'; u.rate = 1.05;
-    const v = speechSynthesis.getVoices().find(v => /^de/i.test(v.lang)); if (v) u.voice = v;
-    speechSynthesis.speak(u);
-  } catch (e) { }
+  // Absichtlich deaktiviert: Auf iOS blockiert Audio-Wiedergabe (auch Vorlesen)
+  // danach das Mikrofon – die nächste Spracherkennung hört dann nichts mehr.
 }
 
 /* ---------- Diktier-Ablauf ----------
@@ -177,16 +172,25 @@ function setMic(listening) {
   const h = $('#vHint'); if (h) h.textContent = listening ? 'Fertig gesprochen? Nochmals tippen.' : '„Privat: Autoöl wechseln, morgen“';
 }
 
+let lastRec = null;
 function startRec() {
+  // Vorherige Aufnahme ganz beenden, sonst bleibt das Mikrofon auf iOS belegt
+  if (lastRec) { const old = lastRec; lastRec = null; old.onend = old.onresult = old.onerror = null; try { old.abort(); } catch (e) { } setTimeout(startRec, 350); return; }
   recText = ''; userStopped = false;
   let base = '';      // Text aus früheren Sitzungen, falls iOS die Aufnahme zwischendurch beendet
   const begin = () => {
     try {
-      rec = new SR();
+      rec = new SR(); lastRec = rec; var me = rec;
       rec.lang = (navigator.language || '').toLowerCase().startsWith('de') ? navigator.language : 'de-DE';
       rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
     } catch (e) { rec = null; openVoice('text'); return; }
+    let heard = false;
+    rec.onaudiostart = () => { heard = true; };
+    const watchdog = setTimeout(() => {
+      if (!heard && rec && $('#vStatus') && !recText) $('#vStatus').textContent = 'Das Mikrofon reagiert nicht. Tippe auf Abbrechen und nochmals aufs Mikrofon – oder „Tippen statt sprechen“.';
+    }, 4000);
     rec.onresult = e => {
+      heard = true;
       const cur = Array.from(e.results).map(r => r[0].transcript).join(' ');
       recText = (base + ' ' + cur).replace(/\s+/g, ' ').trim();
       const t = $('#vText'); if (t) t.textContent = recText;
@@ -201,6 +205,8 @@ function startRec() {
       const st = $('#vStatus'); if (st) st.textContent = msg;
     };
     rec.onend = () => {
+      clearTimeout(watchdog);
+      if (lastRec === me) lastRec = null;
       if ($('#voice').hidden || !$('#vMic')) { rec = null; return; }
       if (!userStopped) {        // iOS hat von selbst beendet (z.B. lange Pause) → weiter zuhören
         base = recText;
@@ -216,6 +222,8 @@ function startRec() {
   begin();
 }
 function stopRec(abort) { userStopped = true; if (rec) { try { abort ? rec.abort() : rec.stop(); } catch (e) { } rec = null; } }
+// Beim Wechsel in den Hintergrund Mikrofon freigeben
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && rec) stopRec(true); });
 
 function spaceOptions(selId) {
   const sp = spaces();
@@ -266,7 +274,6 @@ function showPreview(text) {
   const pause = () => {
     if (paused) return; paused = true;
     clearTimeout(saveTimer);
-    try { speechSynthesis.cancel(); } catch (e) { }
     $('#vProg').classList.add('paused');
     $('#vStatus').textContent = 'Bearbeiten – dann „Speichern“';
   };
@@ -274,9 +281,6 @@ function showPreview(text) {
   saveTimer = setTimeout(save, AUTO_SAVE_MS);
   requestAnimationFrame(() => $('#vProg').classList.add('run'));
 
-  const where = (p.space ? p.space.name : TEMP_NAME) + (p.page ? ', ' + p.page.name : '');
-  const di = p.due ? dueInfo({ due: p.due, time: p.time }) : null;
-  speak(`${p.title}. In ${where}${di ? ', ' + di.label.replace(' · ', ' um ') : ''}.`);
 
   function save() {
     clearTimeout(saveTimer);
@@ -309,7 +313,6 @@ function showSaved({ task, space, page }) {
 
 function closeVoice(cancelSpeech) {
   clearTimeout(saveTimer); clearTimeout(closeTimer); stopRec(true);
-  if (cancelSpeech === true) { try { speechSynthesis.cancel(); } catch (e) { } }
   const ov = $('#voice'); ov.hidden = true; ov.innerHTML = '';
 }
 
