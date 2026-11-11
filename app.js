@@ -4,6 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
+const APP_VERSION = '1.4';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -283,7 +284,8 @@ function homeHTML(tasks) {
       <span class="row-n">${n || ''}</span>${CHEV}</button>`;
   }
   html += `<button class="row add" data-action="new-space"><span class="row-ic plus">＋</span><span class="row-main"><span class="row-t">Neuer Bereich</span></span></button></div>`;
-  if (!spaces().length) html += `<p class="footer-note">Tipp: Tippe unten rechts aufs Mikrofon und sag zum Beispiel „Privat: Autoöl wechseln, morgen“.</p>`;
+  html += `<p class="footer-note" style="text-align:center;margin-top:18px;color:var(--label-3)">Version ${APP_VERSION}</p>`;
+  if (!spaces().length) html += `<p class="footer-note">Tipp: Tippe unten rechts aufs Mikrofon und diktiere zum Beispiel „Privat: Autoöl wechseln, morgen“.</p>`;
   return html;
 }
 
@@ -515,18 +517,29 @@ function settingsSheet() {
     </div>
     <p class="footer-note">Der Token bleibt nur auf diesem Gerät. Nötige Berechtigung: <code>Contents: Read and write</code>, nur für das Daten-Repo.</p>
     <div class="form" style="margin-top:22px"><div class="cell button-cell action" id="syncNow">Jetzt synchronisieren</div></div>
+    <div class="section-h">Diktieren über</div>
+    <div class="form">
+      <div class="cell button-cell" data-dict="keyboard"><span class="lbl">iPhone-Tastatur</span><span class="tick">${settings.dictation !== 'mic' ? '✓' : ''}</span></div>
+      <div class="cell button-cell" data-dict="mic"><span class="lbl">App-Mikrofon</span><span class="tick">${settings.dictation === 'mic' ? '✓' : ''}</span></div>
+    </div>
+    <p class="footer-note">Empfohlen: iPhone-Tastatur – fragt nie nach dem Mikrofon und funktioniert beliebig oft. Das App-Mikrofon fragt bei jedem Start um Erlaubnis und klappt auf dem iPhone oft nur einmal.</p>
     <div class="section-h">Backup</div>
     <div class="form">
       <div class="cell button-cell action left" id="exp">Exportieren (JSON)</div>
       <div class="cell button-cell action left" id="imp">Importieren …</div>
     </div>
-    <input type="file" id="impFile" accept="application/json,.json" hidden>`;
+    <input type="file" id="impFile" accept="application/json,.json" hidden>
+    <p class="footer-note" style="text-align:center;margin-top:24px">Version ${APP_VERSION}</p>`;
   openSheet(frame('Einstellungen', body, { left: 'Schliessen', right: 'Sichern' }), s => {
     const apply = () => {
-      settings = { owner: s.querySelector('#owner').value.trim(), repo: s.querySelector('#repo').value.trim() || 'todo-data', path: s.querySelector('#path').value.trim() || 'todos.json', branch: settings.branch || '', token: s.querySelector('#token').value.trim() };
+      settings = { owner: s.querySelector('#owner').value.trim(), repo: s.querySelector('#repo').value.trim() || 'todo-data', path: s.querySelector('#path').value.trim() || 'todos.json', branch: settings.branch || '', token: s.querySelector('#token').value.trim(), dictation: settings.dictation };
       LS.set(SET_KEY, settings); sync.status = 'idle'; sync.error = '';
     };
     s.querySelector('#save').onclick = () => { apply(); closeSheet(); render(); runSync(); };
+    s.querySelectorAll('[data-dict]').forEach(c => c.onclick = () => {
+      settings.dictation = c.dataset.dict; LS.set(SET_KEY, settings);
+      s.querySelectorAll('[data-dict]').forEach(x => x.querySelector('.tick').textContent = x === c ? '✓' : '');
+    });
     s.querySelector('#syncNow').onclick = () => { apply(); closeSheet(); render(); runSync(); };
     s.querySelector('#exp').onclick = () => {
       const blob = new Blob([serialize(db)], { type: 'application/json' });

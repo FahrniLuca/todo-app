@@ -129,19 +129,22 @@ const STOP_SVG = '<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" heig
 
 function openVoice(mode) {
   if (!SR) mode = 'text';
+  if (!mode) mode = dictationMode();
   clearTimeout(saveTimer); clearTimeout(closeTimer);
   const ov = $('#voice');
   ov.hidden = false;
   if (mode === 'text') {
-    ov.innerHTML = `<div class="v-top"><button class="nav-btn" id="vClose">Abbrechen</button></div>
-      <div class="v-center"><div class="v-status">${SR ? 'Aufgabe eingeben' : 'Aufgabe eingeben oder diktieren'}</div>
-        <div class="v-input"><textarea id="vInput" rows="3" placeholder="z.B. Privat: Autoöl wechseln morgen"></textarea>
-        <p class="footer-note" style="text-align:center">Tipp: Mit dem 🎤 auf der Tastatur kannst du auch hier diktieren.</p>
-        <button class="cta" id="vNext">Weiter</button></div></div>`;
+    ov.innerHTML = `<div class="v-top kb-top"><button class="nav-btn" id="vClose">Abbrechen</button><span class="nav-title">Neue Aufgabe</span><button class="nav-btn right" id="vNext2">Weiter</button></div>
+      <div class="v-kb">
+        <textarea id="vInput" rows="3" placeholder="z.B. Privat: Autoöl wechseln morgen um 9" enterkeyhint="done"></textarea>
+        <div class="kb-hint">${MIC_SVG}<span>Tippe auf der Tastatur unten auf das <b>Mikrofon</b> und sprich. Danach auf <b>Weiter</b> oder <b>Fertig</b>.</span></div>
+        <button class="cta" id="vNext">Weiter</button>
+      </div>`;
     $('#vClose').onclick = () => closeVoice(true);
-    const inp = $('#vInput'); setTimeout(() => inp.focus(), 100);
-    const go = () => { const v = inp.value.trim(); if (v) showPreview(v); };
-    $('#vNext').onclick = go;
+    const inp = $('#vInput');
+    inp.focus();                                   // sofort (im selben Tipp), sonst öffnet iOS die Tastatur nicht
+    const go = () => { const v = inp.value.trim(); if (!v) { inp.focus(); return; } inp.blur(); showPreview(v); };
+    $('#vNext').onclick = go; $('#vNext2').onclick = go;
     inp.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); } };
     return;
   }
@@ -307,7 +310,7 @@ function showSaved({ task, space, page }) {
   closeTimer = setTimeout(() => closeVoice(false), 2500);
   const keep = () => clearTimeout(closeTimer);
   $('#vUndo').onclick = () => { keep(); touch(Object.assign(task, { deleted: true })); commit(); closeVoice(true); showToast('Widerrufen'); };
-  $('#vAgain').onclick = () => { keep(); openVoice('voice'); };
+  $('#vAgain').onclick = () => { keep(); openVoice(); };
   $('#vDone').onclick = () => { keep(); closeVoice(false); };
 }
 
@@ -316,5 +319,6 @@ function closeVoice(cancelSpeech) {
   const ov = $('#voice'); ov.hidden = true; ov.innerHTML = '';
 }
 
-$('#fab').onclick = () => openVoice('voice');
-$('#micBtn').onclick = () => openVoice('voice');
+function dictationMode() { return settings.dictation === 'mic' && SR ? 'voice' : 'text'; }
+$('#fab').onclick = () => openVoice();
+$('#micBtn').onclick = () => openVoice();
