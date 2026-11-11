@@ -382,3 +382,17 @@ body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bo
 
 .v-text.small { font-size: 15px; line-height: 20px; font-weight: 400; color: var(--label-3); letter-spacing: -.24px; order: 3; }
 .v-center .v-result { order: 2; }
+
+/* Vorschau mit Countdown */
+.v-center.preview { justify-content: flex-start; padding-top: 8px; overflow-y: auto; }
+.v-progress { width: 100%; height: 4px; border-radius: 2px; background: var(--fill); overflow: hidden; flex-shrink: 0; }
+.v-progress div { height: 100%; width: 100%; background: var(--blue); transform-origin: left; transform: scaleX(1); }
+.v-progress.run div { transform: scaleX(0); transition: transform 5s linear; }
+.v-progress.paused div { transition: none; transform: scaleX(1); background: var(--label-3); }
+.v-edit { width: 100%; text-align: left; }
+.v-edit .form { background: var(--surface); }
+.v-edit .cell input[type=date], .v-edit .cell input[type=time] { background: var(--surface-2); }
+.p-title { font-size: 22px !important; line-height: 28px !important; font-weight: 600; padding: 14px 0 !important; }
+.footer-note.warn { color: var(--orange); }
+.voice > .v-actions { max-width: 560px; width: 100%; margin: 12px auto 0; flex-shrink: 0; }
+.v-mic.listening svg { width: 30px; height: 30px; }

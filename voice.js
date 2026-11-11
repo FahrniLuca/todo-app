@@ -93,19 +93,25 @@ function ensureTempSpace() {
   return t;
 }
 
+function createTask({ title, spaceId, pageId, due, time }) {
+  const space = spaceId === '__temp__' || !getSpace(spaceId) ? ensureTempSpace() : getSpace(spaceId);
+  const page = pageId && getPage(pageId) && getPage(pageId).spaceId === space.id ? getPage(pageId) : null;
+  const t = touch({
+    id: uid('t'), spaceId: space.id, pageId: page ? page.id : null, title, notes: '',
+    due: due || null, time: due && time ? time : null, done: false, doneAt: null, createdAt: now(), createdBy: 'voice'
+  });
+  db.tasks.push(t); commit();
+  return { task: t, space, page };
+}
+// Direkt aus Text (ohne Vorschau), z.B. für Tests
 function addFromVoice(text) {
   const p = parseVoice(text);
   if (!p.title) return null;
-  const space = p.space || ensureTempSpace();
-  const t = touch({
-    id: uid('t'), spaceId: space.id, pageId: p.page ? p.page.id : null, title: p.title, notes: '',
-    due: p.due, time: p.due ? p.time : null, done: false, doneAt: null, createdAt: now(), createdBy: 'voice'
-  });
-  db.tasks.push(t); commit();
-  return { task: t, space, page: p.page, unknownSpace: p.unknownSpace };
+  const r = createTask({ title: p.title, spaceId: p.space ? p.space.id : '__temp__', pageId: p.page ? p.page.id : null, due: p.due, time: p.time });
+  return Object.assign(r, { unknownSpace: p.unknownSpace });
 }
 
-/* ---------- Sprachausgabe (Bestätigung, ohne aufs Handy zu schauen) ---------- */
+/* ---------- Sprachausgabe (ohne aufs Handy zu schauen) ---------- */
 function speak(text) {
   try {
     if (!('speechSynthesis' in window)) return;
@@ -116,113 +122,193 @@ function speak(text) {
   } catch (e) { }
 }
 
-/* ---------- Diktier-Overlay ---------- */
+/* ---------- Diktier-Ablauf ----------
+   1. Knopf → Aufnahme läuft (Pausen sind egal)
+   2. Knopf nochmals → Vorschau mit 5-Sekunden-Countdown
+   3. Nichts tun → wird gespeichert · Antippen → Countdown stoppt, korrigieren, „Speichern“   */
+const AUTO_SAVE_MS = 5000;
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, voiceTimer = null;
+let rec = null, recText = '', userStopped = false, saveTimer = null, closeTimer = null;
 const MIC_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11.5" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
-
-function voiceHTML(mode) {
-  return `<div class="v-top"><button class="nav-btn" id="vClose">Abbrechen</button></div>
-    <div class="v-center">
-      <div class="v-status" id="vStatus">${mode === 'text' ? 'Aufgabe eingeben' : 'Ich höre zu …'}</div>
-      <div class="v-text" id="vText"></div>
-      ${mode === 'text' ? `<div class="v-input"><textarea id="vInput" rows="3" placeholder="z.B. Privat: Autoöl wechseln morgen"></textarea>
-        <p class="footer-note" style="text-align:center">Tipp: Mit dem 🎤 auf der Tastatur kannst du auch hier diktieren.</p>
-        <button class="cta" id="vAdd">Hinzufügen</button></div>` : ''}
-      <div class="v-result" id="vResult" hidden></div>
-    </div>
-    <div class="v-bottom">
-      ${mode === 'voice' ? `<button class="v-mic listening" id="vMic" aria-label="Aufnahme beenden">${MIC_SVG}</button>
-      <div class="v-hint" id="vHint">„Privat: Autoöl wechseln, morgen“</div>
-      <button class="v-switch" id="vType">Tippen statt sprechen</button>` : ''}
-    </div>`;
-}
+const STOP_SVG = '<svg viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"/></svg>';
 
 function openVoice(mode) {
   if (!SR) mode = 'text';
-  mode = mode || 'voice';
+  clearTimeout(saveTimer); clearTimeout(closeTimer);
   const ov = $('#voice');
-  ov.innerHTML = voiceHTML(mode);
   ov.hidden = false;
-  $('#vClose').onclick = () => closeVoice(true);
   if (mode === 'text') {
+    ov.innerHTML = `<div class="v-top"><button class="nav-btn" id="vClose">Abbrechen</button></div>
+      <div class="v-center"><div class="v-status">${SR ? 'Aufgabe eingeben' : 'Aufgabe eingeben oder diktieren'}</div>
+        <div class="v-input"><textarea id="vInput" rows="3" placeholder="z.B. Privat: Autoöl wechseln morgen"></textarea>
+        <p class="footer-note" style="text-align:center">Tipp: Mit dem 🎤 auf der Tastatur kannst du auch hier diktieren.</p>
+        <button class="cta" id="vNext">Weiter</button></div></div>`;
+    $('#vClose').onclick = () => closeVoice(true);
     const inp = $('#vInput'); setTimeout(() => inp.focus(), 100);
-    const go = () => { const v = inp.value.trim(); if (v) finishVoice(v); };
-    $('#vAdd').onclick = go;
+    const go = () => { const v = inp.value.trim(); if (v) showPreview(v); };
+    $('#vNext').onclick = go;
     inp.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); } };
-    if (!SR) $('#vStatus').textContent = 'Aufgabe eingeben oder diktieren';
     return;
   }
+  ov.innerHTML = `<div class="v-top"><button class="nav-btn" id="vClose">Abbrechen</button></div>
+    <div class="v-center">
+      <div class="v-status" id="vStatus">Ich höre zu …</div>
+      <div class="v-text" id="vText"></div>
+    </div>
+    <div class="v-bottom">
+      <button class="v-mic listening" id="vMic" aria-label="Aufnahme beenden">${STOP_SVG}</button>
+      <div class="v-hint" id="vHint">Fertig gesprochen? Nochmals tippen.</div>
+      <button class="v-switch" id="vType">Tippen statt sprechen</button>
+    </div>`;
+  $('#vClose').onclick = () => closeVoice(true);
   $('#vType').onclick = () => { stopRec(true); openVoice('text'); };
-  $('#vMic').onclick = () => { if (rec) rec.stop(); else startRec(); };
+  $('#vMic').onclick = () => {
+    if (rec) { userStopped = true; try { rec.stop(); } catch (e) { } }
+    else startRec();
+  };
   startRec();
 }
 
-function startRec() {
-  let finalText = '', gotAny = false;
-  try {
-    rec = new SR();
-    rec.lang = (navigator.language || '').toLowerCase().startsWith('de') ? navigator.language : 'de-DE';
-    rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
-  } catch (e) { openVoice('text'); return; }
-  const mic = $('#vMic'); mic && mic.classList.add('listening');
-  $('#vStatus').textContent = 'Ich höre zu …';
-  rec.onresult = e => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
-    }
-    gotAny = true;
-    $('#vText').textContent = (finalText + ' ' + interim).trim();
-  };
-  rec.onerror = e => {
-    const msg = e.error === 'not-allowed' || e.error === 'service-not-allowed'
-      ? 'Kein Zugriff aufs Mikrofon. Erlaube es in den iPhone-Einstellungen oder tippe stattdessen.'
-      : e.error === 'no-speech' ? 'Nichts gehört. Tippe aufs Mikrofon und versuch es nochmals.'
-      : e.error === 'network' ? 'Spracherkennung braucht gerade Internet. Tippe stattdessen.'
-      : e.error === 'aborted' ? '' : 'Spracherkennung fehlgeschlagen. Nochmals versuchen?';
-    if (msg && $('#vStatus')) $('#vStatus').textContent = msg;
-  };
-  rec.onend = () => {
-    rec = null;
-    const m2 = $('#vMic'); m2 && m2.classList.remove('listening');
-    const text = (finalText || $('#vText')?.textContent || '').trim();
-    if (text && $('#voice') && !$('#voice').hidden) finishVoice(text);
-    else if (!gotAny && $('#vStatus') && $('#vStatus').textContent === 'Ich höre zu …') $('#vStatus').textContent = 'Tippe aufs Mikrofon, um nochmals zu sprechen.';
-  };
-  try { rec.start(); } catch (e) { rec = null; openVoice('text'); }
+function setMic(listening) {
+  const m = $('#vMic'); if (!m) return;
+  m.classList.toggle('listening', listening);
+  m.innerHTML = listening ? STOP_SVG : MIC_SVG;
+  m.setAttribute('aria-label', listening ? 'Aufnahme beenden' : 'Aufnahme starten');
+  const h = $('#vHint'); if (h) h.textContent = listening ? 'Fertig gesprochen? Nochmals tippen.' : '„Privat: Autoöl wechseln, morgen“';
 }
-function stopRec(abort) { if (rec) { try { abort ? rec.abort() : rec.stop(); } catch (e) { } rec = null; } }
 
-function finishVoice(text) {
-  const res = addFromVoice(text);
-  const box = $('#vResult');
-  $('#vText').textContent = text;
-  const inputBox = document.querySelector('.v-input'); if (inputBox) inputBox.hidden = true;
-  const bottom = document.querySelector('.v-bottom'); if (bottom) bottom.style.visibility = 'hidden';
-  if (!res) { $('#vStatus').textContent = 'Das habe ich nicht verstanden. Nochmals?'; if (bottom) bottom.style.visibility = ''; return; }
-  const { task, space, page, unknownSpace } = res;
+function startRec() {
+  recText = ''; userStopped = false;
+  let base = '';      // Text aus früheren Sitzungen, falls iOS die Aufnahme zwischendurch beendet
+  const begin = () => {
+    try {
+      rec = new SR();
+      rec.lang = (navigator.language || '').toLowerCase().startsWith('de') ? navigator.language : 'de-DE';
+      rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
+    } catch (e) { rec = null; openVoice('text'); return; }
+    rec.onresult = e => {
+      const cur = Array.from(e.results).map(r => r[0].transcript).join(' ');
+      recText = (base + ' ' + cur).replace(/\s+/g, ' ').trim();
+      const t = $('#vText'); if (t) t.textContent = recText;
+    };
+    rec.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      userStopped = true;   // bei echten Fehlern nicht neu starten
+      const msg = e.error === 'not-allowed' || e.error === 'service-not-allowed'
+        ? 'Kein Zugriff aufs Mikrofon. Erlaube es in den iPhone-Einstellungen oder tippe stattdessen.'
+        : e.error === 'network' ? 'Spracherkennung braucht gerade Internet. Tippe stattdessen.'
+        : 'Spracherkennung fehlgeschlagen. Nochmals versuchen?';
+      const st = $('#vStatus'); if (st) st.textContent = msg;
+    };
+    rec.onend = () => {
+      if ($('#voice').hidden || !$('#vMic')) { rec = null; return; }
+      if (!userStopped) {        // iOS hat von selbst beendet (z.B. lange Pause) → weiter zuhören
+        base = recText;
+        try { begin(); return; } catch (e) { }
+      }
+      rec = null; setMic(false);
+      if (recText.trim()) showPreview(recText.trim());
+      else { const st = $('#vStatus'); if (st && st.textContent === 'Ich höre zu …') st.textContent = 'Nichts gehört. Tippe aufs Mikrofon, um nochmals zu sprechen.'; }
+    };
+    try { rec.start(); setMic(true); } catch (e) { rec = null; openVoice('text'); }
+  };
+  const st = $('#vStatus'); if (st) st.textContent = 'Ich höre zu …';
+  begin();
+}
+function stopRec(abort) { userStopped = true; if (rec) { try { abort ? rec.abort() : rec.stop(); } catch (e) { } rec = null; } }
+
+function spaceOptions(selId) {
+  const sp = spaces();
+  const hasTemp = sp.some(s => s.name.toLowerCase() === TEMP_NAME.toLowerCase());
+  return sp.map(s => `<option value="${esc(s.id)}" ${s.id === selId ? 'selected' : ''}>${esc((s.emoji || '') + ' ' + s.name)}</option>`).join('')
+    + (hasTemp ? '' : `<option value="__temp__" ${selId === '__temp__' ? 'selected' : ''}>${TEMP_EMOJI} ${TEMP_NAME}</option>`);
+}
+function pageOpts(spaceId, selId) {
+  if (spaceId === '__temp__') return '<option value="">Allgemein</option>';
+  return '<option value="">Allgemein</option>' + pagesOf(spaceId).map(p => `<option value="${esc(p.id)}" ${p.id === selId ? 'selected' : ''}>${esc((p.emoji ? p.emoji + ' ' : '') + p.name)}</option>`).join('');
+}
+
+function showPreview(text) {
+  const p = parseVoice(text);
+  const ov = $('#voice');
+  if (!p.title) {
+    const st = $('#vStatus'); if (st) st.textContent = 'Das habe ich nicht verstanden. Tippe aufs Mikrofon und versuch es nochmals.';
+    return;
+  }
+  let spaceId = p.space ? p.space.id : (spaces().find(s => s.name.toLowerCase() === TEMP_NAME.toLowerCase())?.id || '__temp__');
+  ov.innerHTML = `<div class="v-top"><button class="nav-btn" id="vClose">Abbrechen</button></div>
+    <div class="v-center preview">
+      <div class="v-status" id="vStatus">Wird gespeichert …</div>
+      <div class="v-progress" id="vProg"><div></div></div>
+      <div class="v-edit" id="vEdit">
+        <div class="form">
+          <div class="cell"><textarea id="pTitle" rows="1" class="p-title">${esc(p.title)}</textarea></div>
+        </div>
+        <div class="form" style="margin-top:12px">
+          <label class="cell"><span class="lbl">Bereich</span><select id="pSpace">${spaceOptions(spaceId)}</select>${CHEV}</label>
+          <label class="cell"><span class="lbl">Seite</span><select id="pPage">${pageOpts(spaceId, p.page ? p.page.id : null)}</select>${CHEV}</label>
+          <div class="cell"><span class="lbl">Datum</span><input type="date" id="pDue" value="${esc(p.due || '')}"></div>
+          <div class="cell"><span class="lbl">Uhrzeit</span><input type="time" id="pTime" value="${esc(p.time || '')}"></div>
+        </div>
+        ${p.unknownSpace ? `<p class="footer-note warn">Bereich „${esc(p.unknownSpace)}“ gibt es nicht, darum ${TEMP_EMOJI} ${TEMP_NAME}.</p>` : ''}
+        <p class="footer-note">„${esc(text)}“</p>
+      </div>
+    </div>
+    <div class="v-actions"><button class="btn" id="vDiscard">Verwerfen</button><button class="btn primary" id="vSave">Speichern</button></div>`;
+
+  const ta = $('#pTitle'); const autosize = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+  autosize(); ta.oninput = autosize;
+  $('#pSpace').onchange = e => { $('#pPage').innerHTML = pageOpts(e.target.value, null); };
+  $('#pTime').onchange = e => { if (e.target.value && !$('#pDue').value) $('#pDue').value = today(); };
+
+  // Countdown: läuft 5 s, jede Berührung der Vorschau stoppt ihn
+  let paused = false;
+  const pause = () => {
+    if (paused) return; paused = true;
+    clearTimeout(saveTimer);
+    try { speechSynthesis.cancel(); } catch (e) { }
+    $('#vProg').classList.add('paused');
+    $('#vStatus').textContent = 'Bearbeiten – dann „Speichern“';
+  };
+  ['pointerdown', 'focusin', 'keydown'].forEach(ev => $('#vEdit').addEventListener(ev, pause));
+  saveTimer = setTimeout(save, AUTO_SAVE_MS);
+  requestAnimationFrame(() => $('#vProg').classList.add('run'));
+
+  const where = (p.space ? p.space.name : TEMP_NAME) + (p.page ? ', ' + p.page.name : '');
+  const di = p.due ? dueInfo({ due: p.due, time: p.time }) : null;
+  speak(`${p.title}. In ${where}${di ? ', ' + di.label.replace(' · ', ' um ') : ''}.`);
+
+  function save() {
+    clearTimeout(saveTimer);
+    const title = $('#pTitle').value.trim();
+    if (!title) { pause(); $('#pTitle').focus(); return; }
+    const due = $('#pDue').value || null;
+    const r = createTask({ title, spaceId: $('#pSpace').value, pageId: $('#pPage').value || null, due, time: $('#pTime').value || null });
+    showSaved(r);
+  }
+  $('#vSave').onclick = save;
+  $('#vDiscard').onclick = () => { clearTimeout(saveTimer); closeVoice(true); showToast('Verworfen'); };
+  $('#vClose').onclick = () => { clearTimeout(saveTimer); closeVoice(true); };
+}
+
+function showSaved({ task, space, page }) {
   const di = dueInfo(task);
   const where = `${space.emoji || ''} ${space.name}${page ? ' › ' + page.name : ''}`.trim();
-  $('#vStatus').textContent = 'Hinzugefügt';
-  $('#vText').textContent = '„' + text + '“'; $('#vText').classList.add('small');
-  box.hidden = false;
-  box.innerHTML = `<div class="v-card"><div class="v-check">${CHECK_SVG}</div>
+  $('#voice').innerHTML = `<div class="v-top"></div>
+    <div class="v-center"><div class="v-card"><div class="v-check">${CHECK_SVG}</div>
       <div class="v-card-t">${esc(task.title)}</div>
-      <div class="v-card-s">${esc(where)}${di ? ' · ' + esc(di.label) : ''}</div>
-      ${unknownSpace ? `<div class="v-card-n">Bereich „${esc(unknownSpace)}“ gibt es nicht, darum in ${esc(TEMP_NAME)}.</div>` : ''}</div>
+      <div class="v-card-s">${esc(where)}${di ? ' · ' + esc(di.label) : ''}</div></div>
+      <div class="v-status">Gespeichert</div></div>
     <div class="v-actions"><button class="btn" id="vUndo">Widerrufen</button><button class="btn" id="vAgain">Noch eine</button><button class="btn primary" id="vDone">Fertig</button></div>`;
-  speak(`${task.title}. Hinzugefügt in ${space.name}${di ? ', ' + di.label.replace(' · ', ' um ') : ''}.`);
-  clearTimeout(voiceTimer);
-  voiceTimer = setTimeout(() => closeVoice(false), 6000);
-  box.onclick = () => clearTimeout(voiceTimer);
-  $('#vUndo').onclick = () => { touch(Object.assign(task, { deleted: true })); commit(); closeVoice(); showToast('Widerrufen'); };
-  $('#vAgain').onclick = () => openVoice(SR ? 'voice' : 'text');
-  $('#vDone').onclick = () => closeVoice(false);
+  closeTimer = setTimeout(() => closeVoice(false), 2500);
+  const keep = () => clearTimeout(closeTimer);
+  $('#vUndo').onclick = () => { keep(); touch(Object.assign(task, { deleted: true })); commit(); closeVoice(true); showToast('Widerrufen'); };
+  $('#vAgain').onclick = () => { keep(); openVoice('voice'); };
+  $('#vDone').onclick = () => { keep(); closeVoice(false); };
 }
+
 function closeVoice(cancelSpeech) {
-  clearTimeout(voiceTimer); stopRec(true);
+  clearTimeout(saveTimer); clearTimeout(closeTimer); stopRec(true);
   if (cancelSpeech === true) { try { speechSynthesis.cancel(); } catch (e) { } }
   const ov = $('#voice'); ov.hidden = true; ov.innerHTML = '';
 }
