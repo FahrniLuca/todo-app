@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>To-Do</title>
+<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16161a" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="To-Do">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="title-row">
+    <button id="titleBtn" class="title" aria-label="Bereich bearbeiten"></button>
+    <button id="syncBtn" class="sync" aria-label="Sync und Einstellungen"></button>
+  </div>
+  <nav id="spaces" class="chips" aria-label="Bereiche"></nav>
+  <nav id="pages" class="chips sub" aria-label="Unterseiten"></nav>
+</header>
+
+<main id="list" class="list"></main>
+
+<footer id="addbar" class="addbar">
+  <div id="addOpts" class="add-opts" hidden>
+    <div class="quick">
+      <button type="button" data-q="today">Heute</button>
+      <button type="button" data-q="tomorrow">Morgen</button>
+      <button type="button" data-q="week">Nächste Woche</button>
+      <button type="button" data-q="none">Kein Datum</button>
+    </div>
+    <div class="dt">
+      <input type="date" id="addDate" aria-label="Datum">
+      <input type="time" id="addTime" aria-label="Uhrzeit">
+    </div>
+  </div>
+  <form id="addForm" class="add-form" autocomplete="off">
+    <button type="button" id="addDateBtn" class="date-btn" aria-label="Termin setzen">📅</button>
+    <input id="addInput" type="text" placeholder="Neue Aufgabe …" enterkeyhint="done">
+    <button type="submit" class="add-btn" aria-label="Hinzufügen">＋</button>
+  </form>
+</footer>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<div id="sheetWrap" class="sheet-wrap" hidden>
+  <div class="backdrop" data-close></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
