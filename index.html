@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>To-Do</title>
-<meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#16161a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="To-Do">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -17,33 +17,43 @@
 </head>
 <body>
 <header class="top">
-  <div class="title-row">
-    <button id="titleBtn" class="title" aria-label="Bereich bearbeiten"></button>
+  <div class="topbar">
     <button id="syncBtn" class="sync" aria-label="Sync und Einstellungen"></button>
+    <button id="menuBtn" class="circle-btn" aria-label="Mehr">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+    </button>
   </div>
-  <nav id="spaces" class="chips" aria-label="Bereiche"></nav>
-  <nav id="pages" class="chips sub" aria-label="Unterseiten"></nav>
+  <h1 id="title" class="large-title"></h1>
 </header>
+
+<nav class="nav-sticky">
+  <div id="spaces" class="chips" aria-label="Bereiche"></div>
+  <div id="pages" class="chips sub" aria-label="Unterseiten"></div>
+</nav>
 
 <main id="list" class="list"></main>
 
 <footer id="addbar" class="addbar">
   <div id="addOpts" class="add-opts" hidden>
-    <div class="quick">
+    <div class="pills">
       <button type="button" data-q="today">Heute</button>
       <button type="button" data-q="tomorrow">Morgen</button>
       <button type="button" data-q="week">Nächste Woche</button>
       <button type="button" data-q="none">Kein Datum</button>
     </div>
     <div class="dt">
-      <input type="date" id="addDate" aria-label="Datum">
-      <input type="time" id="addTime" aria-label="Uhrzeit">
+      <label class="dt-field"><span>Datum</span><input type="date" id="addDate"></label>
+      <label class="dt-field"><span>Uhrzeit</span><input type="time" id="addTime"></label>
     </div>
   </div>
   <form id="addForm" class="add-form" autocomplete="off">
-    <button type="button" id="addDateBtn" class="date-btn" aria-label="Termin setzen">📅</button>
-    <input id="addInput" type="text" placeholder="Neue Aufgabe …" enterkeyhint="done">
-    <button type="submit" class="add-btn" aria-label="Hinzufügen">＋</button>
+    <button type="button" id="addDateBtn" class="tool-btn" aria-label="Termin setzen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+    </button>
+    <div class="field"><input id="addInput" type="text" placeholder="Neue Erinnerung" enterkeyhint="done"></div>
+    <button type="submit" class="add-btn" aria-label="Hinzufügen">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
   </form>
 </footer>
 

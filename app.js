@@ -132,7 +132,7 @@ function toggleTask(id) {
       setTimeout(() => { pendingHide.delete(id); render(); }, 300);
     }, HIDE_AFTER_MS);
     pendingHide.set(id, { timer, start });
-    showToast('Erledigt ✓', 'Rückgängig', () => toggleTask(id), HIDE_AFTER_MS);
+    showToast('Erledigt', 'Widerrufen', () => toggleTask(id), HIDE_AFTER_MS);
   } else {
     t.done = false; t.doneAt = null; touch(t);
     const p = pendingHide.get(id); if (p) { clearTimeout(p.timer); pendingHide.delete(id); }
@@ -190,15 +190,16 @@ function renderHeader() {
   }
   $('#pages').innerHTML = sub;
 
-  // Titel
+  // Titel (Large Title)
   let title = '';
-  if (ui.view === 'due') title = '📅 Fällig';
-  else if (ui.view === 'inbox') title = '📥 Eingang';
+  if (ui.view === 'due') title = 'Fällig';
+  else if (ui.view === 'inbox') title = 'Eingang';
   else if (ui.spaceId) {
     const s = getSpace(ui.spaceId), p = ui.pageId && getPage(ui.pageId);
-    title = `${esc(s.emoji || '📁')} ${esc(s.name)}` + (p ? ` <span class="crumb">› ${p.emoji ? esc(p.emoji) + ' ' : ''}${esc(p.name)}</span>` : '') + `<span class="more">⋯</span>`;
-  } else title = 'To-Do';
-  $('#titleBtn').innerHTML = title;
+    title = p ? `${p.emoji ? esc(p.emoji) + ' ' : ''}${esc(p.name)}` : `${esc(s.emoji || '')} ${esc(s.name)}`.trim();
+  } else title = 'Erinnerungen';
+  $('#title').innerHTML = title;
+  document.title = $('#title').textContent || 'To-Do';
 
   // Sync-Badge
   const b = $('#syncBtn');
@@ -213,12 +214,14 @@ function renderHeader() {
   b.innerHTML = `<span class="dot"></span>${txt}`;
 }
 
+const ICON_CAL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+const ICON_NOTE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h9"/></svg>';
 function taskHTML(t, ctx) {
   const di = dueInfo(t);
   const meta = [];
-  if (di) meta.push(`<span class="due ${t.done ? '' : di.cls}">📅 ${esc(di.label)}</span>`);
+  if (di) meta.push(`<span class="due ${t.done ? '' : di.cls}">${ICON_CAL}${esc(di.label)}</span>`);
   if (ctx) meta.push(`<span>${esc(ctx)}</span>`);
-  if (t.notes) meta.push('<span>📝</span>');
+  if (t.notes) meta.push(`<span>${ICON_NOTE}</span>`);
   if (t.createdBy === 'claude') meta.push('<span class="by-claude">✦ Claude</span>');
   const p = pendingHide.get(t.id);
   const cd = p && !ui.showDone ? `<div class="countdown" style="animation-delay:-${now() - p.start}ms"></div>` : '';
@@ -233,13 +236,15 @@ function ctxLabel(t) {
   const s = getSpace(t.spaceId), p = t.pageId && getPage(t.pageId);
   return s ? `${s.emoji || ''} ${s.name}${p ? ' › ' + p.name : ''}`.trim() : '';
 }
+const group = (items, ctx) => items.length ? `<div class="group">${items.map(t => taskHTML(t, ctx ? ctxLabel(t) : null)).join('')}</div>` : '';
+const EMPTY_ICON = '<svg class="icon" viewBox="0 0 56 56" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="24"/><path d="M18 28.5l7 7 13-14"/></svg>';
+const emptyState = (title, text, cta) => `<div class="empty">${EMPTY_ICON}<div class="title">${esc(title)}</div><div>${text}</div>${cta || ''}</div>`;
 
 function renderList() {
   const el = $('#list');
   const tasks = alive(db.tasks);
   if (!spaces().length && ui.view !== 'inbox') {
-    el.innerHTML = `<div class="empty"><div class="big">✨</div><div>Noch keine Bereiche.<br>Lege deinen ersten an, z.B. „🏠 Privat“.</div>
-      <button class="btn primary" data-action="new-space">Bereich erstellen</button></div>`;
+    el.innerHTML = emptyState('Willkommen', 'Lege deinen ersten Bereich an,<br>zum Beispiel „🏠 Privat“.', '<button class="cta" data-action="new-space">Bereich erstellen</button>');
     return;
   }
   let list, html = '';
@@ -248,22 +253,20 @@ function renderList() {
     list = tasks.filter(t => t.due && t.due <= td && !isOrphan(t) && (ui.showDone ? true : visible(t)));
     const over = list.filter(t => t.due < td).sort(sortTasks), tod = list.filter(t => t.due === td).sort(sortTasks);
     const upcoming = tasks.filter(t => !t.done && t.due && t.due > td && t.due <= addDays(7) && !isOrphan(t)).sort(sortTasks);
-    if (over.length) html += `<div class="group-label">Überfällig</div>` + over.map(t => taskHTML(t, ctxLabel(t))).join('');
-    if (tod.length) html += `<div class="group-label">Heute</div>` + tod.map(t => taskHTML(t, ctxLabel(t))).join('');
-    if (upcoming.length) html += `<div class="group-label">Nächste 7 Tage</div>` + upcoming.map(t => taskHTML(t, ctxLabel(t))).join('');
-    if (!html) html = `<div class="empty"><div class="big">🌤️</div>Nichts fällig. Geniess den Tag!</div>`;
+    if (over.length) html += `<div class="section-h red">Überfällig</div>` + group(over, true);
+    if (tod.length) html += `<div class="section-h">Heute</div>` + group(tod, true);
+    if (upcoming.length) html += `<div class="section-h">Nächste 7 Tage</div>` + group(upcoming, true);
+    if (!html) html = emptyState('Nichts fällig', 'Geniess den Tag.');
     el.innerHTML = html; return;
   }
   if (ui.view === 'inbox') {
     list = tasks.filter(t => isOrphan(t) && (ui.showDone || visible(t))).sort(sortTasks);
-    html = `<p class="hint" style="margin:4px 6px 10px">Diese Aufgaben gehören zu keinem (mehr) existierenden Bereich. Tippe eine an, um sie zu verschieben.</p>`;
-    el.innerHTML = html + list.map(t => taskHTML(t)).join('') + doneToggle(tasks.filter(isOrphan));
+    el.innerHTML = `<div class="section-h">Ohne Bereich – antippen zum Verschieben</div>` + group(list) + doneToggle(tasks.filter(isOrphan));
     return;
   }
   const scope = tasks.filter(t => t.spaceId === ui.spaceId && (t.pageId || null) === (ui.pageId || null));
   list = scope.filter(t => ui.showDone || visible(t)).sort(sortTasks);
-  if (!list.length) html = `<div class="empty"><div class="big">🎉</div>Alles erledigt hier.</div>`;
-  else html = list.map(t => taskHTML(t)).join('');
+  html = list.length ? '<div style="height:8px"></div>' + group(list) : emptyState('Alles erledigt', 'Neue Erinnerungen fügst du unten hinzu.');
   el.innerHTML = html + doneToggle(scope);
 }
 function doneToggle(scope) {
@@ -278,46 +281,71 @@ function showToast(msg, actionLabel, action, ms = 3000) {
   const t = $('#toast');
   t.innerHTML = `<span>${esc(msg)}</span>` + (actionLabel ? `<button>${esc(actionLabel)}</button>` : '');
   t.hidden = false;
+  const bar = $('#addbar'); t.style.bottom = ((bar.hidden ? 0 : bar.offsetHeight) + 14) + 'px';
   if (actionLabel) t.querySelector('button').onclick = () => { hideToast(); action(); };
   clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, ms);
 }
 function hideToast() { $('#toast').hidden = true; }
 
-/* ---------- Sheets ---------- */
-function openSheet(html, mount) {
-  $('#sheet').innerHTML = html;
+/* ---------- Sheets (iOS-Stil) ---------- */
+const CHEV = '<svg class="chev" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5L6.5 7l-5 5.5"/></svg>';
+function openSheet(html, mount, plain = false) {
+  const sh = $('#sheet');
+  sh.className = 'sheet' + (plain ? ' plain' : '');
+  sh.innerHTML = html;
   $('#sheetWrap').hidden = false;
-  mount && mount($('#sheet'));
+  mount && mount(sh);
 }
 function closeSheet() { $('#sheetWrap').hidden = true; $('#sheet').innerHTML = ''; }
 $('#sheetWrap').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeSheet(); });
-
+function frame(title, body, { left = 'Abbrechen', right = 'Fertig' } = {}) {
+  return `<div class="grabber"></div>
+    <div class="navbar"><button class="nav-btn" data-close>${esc(left)}</button><div class="nav-title">${esc(title)}</div>${right ? `<button class="nav-btn right" id="save">${esc(right)}</button>` : '<span></span>'}</div>
+    <div class="sheet-body">${body}</div>`;
+}
+// iOS Action Sheet
+function actionSheet({ title, message, actions }) {
+  const msg = title || message ? `<div class="msg">${title ? `<b>${esc(title)}</b>` : ''}${message ? esc(message) : ''}</div>` : '';
+  openSheet(`<div class="action-group">${msg}${actions.map((a, i) => `<button data-i="${i}" class="${a.danger ? 'danger' : ''}">${esc(a.label)}</button>`).join('')}</div>
+    <div class="action-group"><button class="bold" data-close>Abbrechen</button></div>`,
+    s => s.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { closeSheet(); actions[+b.dataset.i].run(); }), true);
+}
 function confirmSheet(text, okLabel, onOk) {
-  openSheet(`<h2>${esc(text)}</h2><div class="actions"><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="okBtn" style="background:var(--danger)">${esc(okLabel)}</button></div>`,
-    s => s.querySelector('#okBtn').onclick = () => { closeSheet(); onOk(); });
+  actionSheet({ message: text, actions: [{ label: okLabel, danger: true, run: onOk }] });
 }
 
-function emojiField(current) {
-  return `<div class="emoji-row"><input type="text" class="emoji-input" id="emoji" value="${esc(current || '')}" placeholder="🙂" maxlength="16"><span class="hint" style="margin:0">Tippe ein Emoji ein oder wähle unten eines.</span></div>
-    <div class="emoji-grid">${EMOJIS.map(e => `<button type="button" data-emoji="${e}" class="${e === current ? 'on' : ''}">${e}</button>`).join('')}</div>`;
+function iconPicker(current, name, placeholder) {
+  return `<div class="form">
+      <div class="icon-hero"><div class="icon-circle" id="iconPreview">${esc(current || '📁')}</div>
+      <input type="text" id="name" value="${esc(name || '')}" placeholder="${esc(placeholder)}" enterkeyhint="done"></div>
+    </div>
+    <div class="section-h">Icon</div>
+    <div class="form">
+      <div class="emoji-grid">${EMOJIS.map(e => `<button type="button" data-emoji="${e}" class="${e === current ? 'on' : ''}">${e}</button>`).join('')}</div>
+      <div class="cell emoji-custom"><input type="text" id="emoji" value="${esc(current || '')}" maxlength="16" aria-label="Eigenes Emoji"><span>Eigenes Emoji eintippen</span></div>
+    </div>`;
 }
-function wireEmoji(s) {
+function wireIcon(s) {
+  const prev = s.querySelector('#iconPreview'), inp = s.querySelector('#emoji');
   s.querySelectorAll('[data-emoji]').forEach(b => b.onclick = () => {
-    s.querySelector('#emoji').value = b.dataset.emoji;
+    inp.value = b.dataset.emoji; prev.textContent = b.dataset.emoji;
     s.querySelectorAll('[data-emoji]').forEach(x => x.classList.toggle('on', x === b));
   });
+  inp.oninput = () => { prev.textContent = inp.value.trim() || '📁'; s.querySelectorAll('[data-emoji]').forEach(x => x.classList.toggle('on', x.dataset.emoji === inp.value.trim())); };
+}
+function orderAndDelete(kind) {
+  return `<div class="section-h">Reihenfolge</div>
+    <div class="form"><div class="cell button-cell action left" id="left">Nach links verschieben</div><div class="cell button-cell action left" id="right">Nach rechts verschieben</div></div>
+    <div class="form" style="margin-top:28px"><div class="cell button-cell action danger" id="del">${kind} löschen</div></div>`;
 }
 
 function spaceSheet(space) {
   const isNew = !space;
-  openSheet(`<h2>${isNew ? 'Neuer Bereich' : 'Bereich bearbeiten'}</h2>
-    <label>Name</label><input type="text" id="name" value="${esc(space?.name || '')}" placeholder="z.B. Privat">
-    <label>Icon</label>${emojiField(space?.emoji || (isNew ? '🏠' : ''))}
-    ${isNew ? '' : `<label>Reihenfolge</label><div class="row"><button class="btn small" id="left">◀︎ nach links</button><button class="btn small" id="right">nach rechts ▶︎</button></div>`}
-    <div class="actions">${isNew ? '<button class="btn" data-close>Abbrechen</button>' : '<button class="btn danger" id="del">Löschen</button>'}<button class="btn primary" id="save">${isNew ? 'Erstellen' : 'Speichern'}</button></div>`,
+  openSheet(frame(isNew ? 'Neuer Bereich' : 'Bereich', iconPicker(space?.emoji || (isNew ? '🏠' : ''), space?.name, 'Name des Bereichs') + (isNew ? '' : orderAndDelete('Bereich')),
+    { right: isNew ? 'Erstellen' : 'Fertig' }),
     s => {
-      wireEmoji(s);
-      const nameEl = s.querySelector('#name'); if (isNew) setTimeout(() => nameEl.focus(), 50);
+      wireIcon(s);
+      const nameEl = s.querySelector('#name'); if (isNew) setTimeout(() => nameEl.focus(), 350);
       s.querySelector('#save').onclick = () => {
         const name = nameEl.value.trim(); const emoji = s.querySelector('#emoji').value.trim();
         if (!name) { nameEl.focus(); return; }
@@ -328,20 +356,17 @@ function spaceSheet(space) {
       if (!isNew) {
         s.querySelector('#left').onclick = () => moveItem(spaces(), space, -1);
         s.querySelector('#right').onclick = () => moveItem(spaces(), space, +1);
-        s.querySelector('#del').onclick = () => confirmSheet(`„${space.name}“ mit allen Seiten und Aufgaben löschen?`, 'Löschen', () => deleteSpace(space.id));
+        s.querySelector('#del').onclick = () => confirmSheet(`„${space.name}“ wird mit allen Seiten und Aufgaben gelöscht.`, 'Bereich löschen', () => deleteSpace(space.id));
       }
     });
 }
 function pageSheet(page) {
   const isNew = !page;
-  openSheet(`<h2>${isNew ? 'Neue Unterseite' : 'Unterseite bearbeiten'}</h2>
-    <label>Name</label><input type="text" id="name" value="${esc(page?.name || '')}" placeholder="z.B. Einkaufen">
-    <label>Icon (optional)</label>${emojiField(page?.emoji || '')}
-    ${isNew ? '' : `<label>Reihenfolge</label><div class="row"><button class="btn small" id="left">◀︎ nach links</button><button class="btn small" id="right">nach rechts ▶︎</button></div>`}
-    <div class="actions">${isNew ? '<button class="btn" data-close>Abbrechen</button>' : '<button class="btn danger" id="del">Löschen</button>'}<button class="btn primary" id="save">${isNew ? 'Erstellen' : 'Speichern'}</button></div>`,
+  openSheet(frame(isNew ? 'Neue Seite' : 'Seite', iconPicker(page?.emoji || '', page?.name, 'Name der Seite') + (isNew ? '' : orderAndDelete('Seite')),
+    { right: isNew ? 'Erstellen' : 'Fertig' }),
     s => {
-      wireEmoji(s);
-      const nameEl = s.querySelector('#name'); if (isNew) setTimeout(() => nameEl.focus(), 50);
+      wireIcon(s);
+      const nameEl = s.querySelector('#name'); if (isNew) setTimeout(() => nameEl.focus(), 350);
       s.querySelector('#save').onclick = () => {
         const name = nameEl.value.trim(); const emoji = s.querySelector('#emoji').value.trim();
         if (!name) { nameEl.focus(); return; }
@@ -352,22 +377,20 @@ function pageSheet(page) {
       if (!isNew) {
         s.querySelector('#left').onclick = () => moveItem(pagesOf(page.spaceId), page, -1);
         s.querySelector('#right').onclick = () => moveItem(pagesOf(page.spaceId), page, +1);
-        s.querySelector('#del').onclick = () => confirmSheet(`Seite „${page.name}“ mit ihren Aufgaben löschen?`, 'Löschen', () => deletePage(page.id));
+        s.querySelector('#del').onclick = () => confirmSheet(`Die Seite „${page.name}“ wird mit ihren Aufgaben gelöscht.`, 'Seite löschen', () => deletePage(page.id));
       }
     });
 }
 function titleMenu() {
-  if (ui.view !== 'space' || !ui.spaceId) return;
+  if (ui.view !== 'space' || !ui.spaceId) { settingsSheet(); return; }
   const s = getSpace(ui.spaceId), p = ui.pageId && getPage(ui.pageId);
-  openSheet(`<h2>${esc(s.emoji || '')} ${esc(s.name)}${p ? ' › ' + esc(p.name) : ''}</h2><div class="menu-list">
-    ${p ? `<button id="ep">✏️ Seite „${esc(p.name)}“ bearbeiten</button>` : ''}
-    <button id="np">➕ Neue Unterseite</button>
-    <button id="es">✏️ Bereich „${esc(s.name)}“ bearbeiten</button>
-    <button data-close>Schliessen</button></div>`, sh => {
-    if (p) sh.querySelector('#ep').onclick = () => pageSheet(p);
-    sh.querySelector('#np').onclick = () => pageSheet(null);
-    sh.querySelector('#es').onclick = () => spaceSheet(s);
-  });
+  const actions = [];
+  if (p) actions.push({ label: `Seite „${p.name}“ bearbeiten`, run: () => pageSheet(p) });
+  actions.push({ label: 'Neue Seite', run: () => pageSheet(null) });
+  actions.push({ label: `Bereich „${s.name}“ bearbeiten`, run: () => spaceSheet(s) });
+  actions.push({ label: ui.showDone ? 'Erledigte ausblenden' : 'Erledigte anzeigen', run: () => { ui.showDone = !ui.showDone; saveUI(); render(); } });
+  actions.push({ label: 'Sync & Einstellungen', run: settingsSheet });
+  actionSheet({ actions });
 }
 
 function pageOptions(spaceId, selected) {
@@ -376,77 +399,99 @@ function pageOptions(spaceId, selected) {
 function taskSheet(t) {
   const sp = spaces();
   const curSpace = getSpace(t.spaceId) ? t.spaceId : (sp[0]?.id || '');
-  openSheet(`<h2>Aufgabe</h2>
-    <label>Titel</label><textarea id="title" rows="2">${esc(t.title)}</textarea>
-    <label>Notizen</label><textarea id="notes" rows="3" placeholder="Details, Links …">${esc(t.notes || '')}</textarea>
-    <label>Termin</label>
-    <div class="quick">
-      <button type="button" data-q="today">Heute</button><button type="button" data-q="tomorrow">Morgen</button>
-      <button type="button" data-q="week">Nächste Woche</button><button type="button" data-q="none">Kein Datum</button>
+  const body = `
+    <div class="form">
+      <div class="cell"><textarea id="title" rows="1" placeholder="Titel">${esc(t.title)}</textarea></div>
+      <div class="cell"><textarea id="notes" rows="2" placeholder="Notizen">${esc(t.notes || '')}</textarea></div>
     </div>
-    <div class="row"><input type="date" id="due" value="${esc(t.due || '')}"><input type="time" id="time" value="${esc(t.time || '')}"></div>
-    <div class="row">
-      <div><label>Bereich</label><select id="space">${sp.map(s => `<option value="${esc(s.id)}" ${s.id === curSpace ? 'selected' : ''}>${esc((s.emoji || '') + ' ' + s.name)}</option>`).join('')}</select></div>
-      <div><label>Seite</label><select id="page">${pageOptions(curSpace, t.pageId)}</select></div>
+    <div class="section-h">Termin</div>
+    <div class="form">
+      <div class="cell"><div class="pills in-cell">
+        <button type="button" data-q="today">Heute</button><button type="button" data-q="tomorrow">Morgen</button>
+        <button type="button" data-q="week">Nächste Woche</button><button type="button" data-q="none">Keins</button></div></div>
+      <div class="cell"><span class="lbl">Datum</span><input type="date" id="due" value="${esc(t.due || '')}"></div>
+      <div class="cell"><span class="lbl">Uhrzeit</span><input type="time" id="time" value="${esc(t.time || '')}"></div>
     </div>
-    ${t.createdBy === 'claude' ? '<p class="hint">✦ Von Claude hinzugefügt</p>' : ''}
-    <div class="actions"><button class="btn danger" id="del">Löschen</button><button class="btn" data-close>Abbrechen</button><button class="btn primary" id="save">Speichern</button></div>`,
-    s => {
-      s.querySelector('#space').onchange = e => s.querySelector('#page').innerHTML = pageOptions(e.target.value, null);
-      s.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
-        const q = b.dataset.q;
-        s.querySelector('#due').value = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
-        if (q === 'none') s.querySelector('#time').value = '';
-      });
-      s.querySelector('#save').onclick = () => {
-        const title = s.querySelector('#title').value.trim(); if (!title) return;
-        const due = s.querySelector('#due').value || null;
-        Object.assign(t, {
-          title, notes: s.querySelector('#notes').value.trim(), due, time: due ? (s.querySelector('#time').value || null) : null,
-          spaceId: s.querySelector('#space').value || t.spaceId, pageId: s.querySelector('#page').value || null
-        });
-        touch(t); closeSheet(); commit();
-      };
-      s.querySelector('#del').onclick = () => { touch(Object.assign(t, { deleted: true })); closeSheet(); commit(); showToast('Aufgabe gelöscht', 'Rückgängig', () => { touch(Object.assign(t, { deleted: false })); commit(); }, 5000); };
+    <div class="section-h">Liste</div>
+    <div class="form">
+      <label class="cell"><span class="lbl">Bereich</span><select id="space">${sp.map(s => `<option value="${esc(s.id)}" ${s.id === curSpace ? 'selected' : ''}>${esc((s.emoji || '') + ' ' + s.name)}</option>`).join('')}</select>${CHEV}</label>
+      <label class="cell"><span class="lbl">Seite</span><select id="page">${pageOptions(curSpace, t.pageId)}</select>${CHEV}</label>
+    </div>
+    ${t.createdBy === 'claude' ? '<p class="footer-note">✦ Von Claude hinzugefügt</p>' : ''}
+    <div class="form" style="margin-top:28px"><div class="cell button-cell action danger" id="del">Aufgabe löschen</div></div>`;
+  openSheet(frame('Details', body), s => {
+    const autosize = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    s.querySelectorAll('textarea').forEach(ta => { autosize(ta); ta.oninput = () => autosize(ta); });
+    const dueEl = s.querySelector('#due'), timeEl = s.querySelector('#time');
+    const markPills = () => s.querySelectorAll('[data-q]').forEach(b => {
+      const q = b.dataset.q; const v = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
+      b.classList.toggle('on', dueEl.value === v);
     });
+    markPills(); dueEl.onchange = markPills;
+    timeEl.onchange = () => { if (timeEl.value && !dueEl.value) { dueEl.value = today(); markPills(); } };
+    s.querySelector('#space').onchange = e => s.querySelector('#page').innerHTML = pageOptions(e.target.value, null);
+    s.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+      const q = b.dataset.q;
+      dueEl.value = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
+      if (q === 'none') timeEl.value = '';
+      markPills();
+    });
+    s.querySelector('#save').onclick = () => {
+      const title = s.querySelector('#title').value.trim(); if (!title) { s.querySelector('#title').focus(); return; }
+      const due = dueEl.value || null;
+      Object.assign(t, {
+        title, notes: s.querySelector('#notes').value.trim(), due, time: due ? (timeEl.value || null) : null,
+        spaceId: s.querySelector('#space').value || t.spaceId, pageId: s.querySelector('#page').value || null
+      });
+      touch(t); closeSheet(); commit();
+    };
+    s.querySelector('#del').onclick = () => { touch(Object.assign(t, { deleted: true })); closeSheet(); commit(); showToast('Aufgabe gelöscht', 'Widerrufen', () => { touch(Object.assign(t, { deleted: false })); commit(); }, 5000); };
+  });
 }
 
 function settingsSheet() {
   const last = sync.lastSync ? new Date(sync.lastSync).toLocaleString('de-CH', { dateStyle: 'short', timeStyle: 'short' }) : 'noch nie';
-  const status = !configured() ? 'Noch nicht mit GitHub verbunden – Daten liegen nur auf diesem Gerät.'
-    : sync.status === 'error' ? 'Fehler: ' + sync.error
-    : !navigator.onLine ? `Offline. Du siehst den Stand vom ${last}. Änderungen werden später hochgeladen.`
-    : `Zuletzt synchronisiert: ${last}${sync.dirty ? ' · Änderungen ausstehend' : ''}`;
-  openSheet(`<h2>Sync & Einstellungen</h2>
-    <div class="status-box ${sync.status === 'error' ? 'err' : ''}">${esc(status)}</div>
-    <label>GitHub-Benutzername</label><input type="text" id="owner" value="${esc(settings.owner)}" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="z.B. lucafahrni">
-    <div class="row">
-      <div><label>Daten-Repo</label><input type="text" id="repo" value="${esc(settings.repo)}" autocapitalize="off" spellcheck="false"></div>
-      <div><label>Datei</label><input type="text" id="path" value="${esc(settings.path)}" autocapitalize="off" spellcheck="false"></div>
+  const status = !configured() ? 'Nicht verbunden – Daten liegen nur auf diesem Gerät.'
+    : sync.status === 'error' ? sync.error
+    : !navigator.onLine ? `Offline · Stand vom ${last}. Änderungen werden später hochgeladen.`
+    : `Synchronisiert ${last}${sync.dirty ? ' · Änderungen ausstehend' : ''}`;
+  const body = `
+    <div class="section-h">Status</div>
+    <div class="form"><div class="status-row ${sync.status === 'error' ? 'err' : ''}">${esc(status)}</div></div>
+    <div class="section-h">GitHub</div>
+    <div class="form">
+      <div class="cell"><span class="lbl">Benutzer</span><input type="text" class="right" id="owner" value="${esc(settings.owner)}" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Benutzername"></div>
+      <div class="cell"><span class="lbl">Repo</span><input type="text" class="right" id="repo" value="${esc(settings.repo)}" autocapitalize="off" spellcheck="false"></div>
+      <div class="cell"><span class="lbl">Datei</span><input type="text" class="right" id="path" value="${esc(settings.path)}" autocapitalize="off" spellcheck="false"></div>
+      <div class="cell"><span class="lbl">Token</span><input type="password" class="right" id="token" value="${esc(settings.token)}" autocapitalize="off" spellcheck="false" placeholder="github_pat_…"></div>
     </div>
-    <label>Zugangs-Token (Fine-grained, nur dieses Repo)</label><input type="password" id="token" value="${esc(settings.token)}" autocapitalize="off" spellcheck="false" placeholder="github_pat_…">
-    <p class="hint">Der Token bleibt nur auf diesem Gerät gespeichert. Rechte: <code>Contents: Read and write</code> für das Daten-Repo.</p>
-    <div class="actions"><button class="btn" data-close>Schliessen</button><button class="btn primary" id="save">Speichern & Sync</button></div>
-    <label style="margin-top:22px">Daten</label>
-    <div class="row"><button class="btn small" id="exp">Export (JSON)</button><button class="btn small" id="imp">Import</button><input type="file" id="impFile" accept="application/json,.json" hidden></div>`,
-    s => {
-      s.querySelector('#save').onclick = () => {
-        settings = { owner: s.querySelector('#owner').value.trim(), repo: s.querySelector('#repo').value.trim() || 'todo-data', path: s.querySelector('#path').value.trim() || 'todos.json', branch: settings.branch || '', token: s.querySelector('#token').value.trim() };
-        LS.set(SET_KEY, settings); sync.status = 'idle'; sync.error = '';
-        closeSheet(); render(); runSync();
-      };
-      s.querySelector('#exp').onclick = () => {
-        const blob = new Blob([serialize(db)], { type: 'application/json' });
-        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `todos-${today()}.json`; a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-      };
-      s.querySelector('#imp').onclick = () => s.querySelector('#impFile').click();
-      s.querySelector('#impFile').onchange = async e => {
-        const f = e.target.files[0]; if (!f) return;
-        try { const data = normalize(JSON.parse(await f.text())); db = mergeData(db, data); closeSheet(); commit(); showToast('Import zusammengeführt'); }
-        catch (err) { showToast('Datei ist kein gültiges JSON'); }
-      };
-    });
+    <p class="footer-note">Der Token bleibt nur auf diesem Gerät. Nötige Berechtigung: <code>Contents: Read and write</code>, nur für das Daten-Repo.</p>
+    <div class="form" style="margin-top:22px"><div class="cell button-cell action" id="syncNow">Jetzt synchronisieren</div></div>
+    <div class="section-h">Backup</div>
+    <div class="form">
+      <div class="cell button-cell action left" id="exp">Exportieren (JSON)</div>
+      <div class="cell button-cell action left" id="imp">Importieren …</div>
+    </div>
+    <input type="file" id="impFile" accept="application/json,.json" hidden>`;
+  openSheet(frame('Einstellungen', body, { left: 'Schliessen', right: 'Sichern' }), s => {
+    const apply = () => {
+      settings = { owner: s.querySelector('#owner').value.trim(), repo: s.querySelector('#repo').value.trim() || 'todo-data', path: s.querySelector('#path').value.trim() || 'todos.json', branch: settings.branch || '', token: s.querySelector('#token').value.trim() };
+      LS.set(SET_KEY, settings); sync.status = 'idle'; sync.error = '';
+    };
+    s.querySelector('#save').onclick = () => { apply(); closeSheet(); render(); runSync(); };
+    s.querySelector('#syncNow').onclick = () => { apply(); closeSheet(); render(); runSync(); };
+    s.querySelector('#exp').onclick = () => {
+      const blob = new Blob([serialize(db)], { type: 'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `todos-${today()}.json`; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    };
+    s.querySelector('#imp').onclick = () => s.querySelector('#impFile').click();
+    s.querySelector('#impFile').onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      try { const data = normalize(JSON.parse(await f.text())); db = mergeData(db, data); closeSheet(); commit(); showToast('Import zusammengeführt'); }
+      catch (err) { showToast('Datei ist kein gültiges JSON'); }
+    };
+  });
 }
 
 /* ---------- Events ---------- */
@@ -462,7 +507,8 @@ document.addEventListener('click', e => {
   else if (el.dataset.action === 'new-page') pageSheet(null);
   else if (el.dataset.action === 'toggle-done') { ui.showDone = !ui.showDone; saveUI(); render(); }
 });
-$('#titleBtn').onclick = titleMenu;
+$('#menuBtn').onclick = titleMenu;
+$('#title').onclick = titleMenu;
 $('#syncBtn').onclick = settingsSheet;
 
 $('#addForm').addEventListener('submit', e => {
@@ -490,7 +536,7 @@ function updateAddDate() {
     const val = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
     b.classList.toggle('on', q !== 'none' ? addDue.date === val : !addDue.date);
   });
-  $('#addInput').placeholder = addDue.date ? `Neue Aufgabe · ${dueInfo({ due: addDue.date, time: addDue.time }).label}` : 'Neue Aufgabe …';
+  $('#addInput').placeholder = addDue.date ? `Neue Erinnerung · ${dueInfo({ due: addDue.date, time: addDue.time }).label}` : 'Neue Erinnerung';
 }
 
 /* ---------- Sync (GitHub Contents API) ---------- */

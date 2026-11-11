@@ -22,7 +22,7 @@ Falls noch keins: https://github.com/signup
 1. https://github.com/new
 2. Name: `todo-app`, **Public**, „Add a README file“ anhaken → erstellen
 3. Im Repo: **Add file → Upload files** → alle Dateien aus dem ZIP hineinziehen
-   (`index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, die drei `.png`) → „Commit changes“
+   (`index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, alle `.png`) → „Commit changes“
 4. **Settings → Pages** → Source: „Deploy from a branch“, Branch: `main`, Ordner `/ (root)` → Save
 5. Nach ca. 1 Minute läuft die App unter:
    `https://DEIN-BENUTZERNAME.github.io/todo-app/`
@@ -35,6 +35,8 @@ Falls noch keins: https://github.com/signup
 5. „Generate token“ → Token kopieren (beginnt mit `github_pat_`)
 
 ## 5. Aufs Handy
+Das App-Icon wird beim Hinzufügen automatisch übernommen (iOS rundet die Ecken selbst ab). `icon-1024.png` ist die grosse Version, z.B. für die Kurzbefehle-App.
+
 - **iPhone:** Link in **Safari** öffnen → Teilen-Symbol → **„Zum Home-Bildschirm“**
 - **Android:** Link in Chrome öffnen → ⋮ → **„App installieren“**
 
