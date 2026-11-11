@@ -1,7 +1,7 @@
 // Service Worker: hält die App offline verfügbar (App-Dateien im Cache).
 // Die Aufgaben selbst liegen im localStorage der App und werden beim nächsten
 // Online-Moment mit GitHub synchronisiert.
-const CACHE = 'todo-app-v2';
+const CACHE = 'todo-app-v3';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './icon-1024.png'];
 
 self.addEventListener('install', e => {
