@@ -289,3 +289,96 @@ svg { display: block; }
 .action-group button.danger { color: var(--red); }
 .action-group button.bold { font-weight: 600; }
 .action-group button:active { background: rgba(255,255,255,.08); }
+
+/* ---------- Startseite / Übersicht ---------- */
+.chip .em svg { width: 16px; height: 16px; }
+.date-line { font-size: 15px; color: var(--label-2); margin: 4px 4px 14px; text-transform: capitalize; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  background: var(--surface); border-radius: var(--r); padding: 12px 14px 12px; text-align: left; min-height: 86px;
+}
+.tile:active { background: var(--surface-2); }
+.tile-ic { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; }
+.tile-ic svg { width: 19px; height: 19px; }
+.tile-n { position: absolute; top: 10px; right: 14px; font-size: 28px; line-height: 34px; font-weight: 700; letter-spacing: .36px; font-variant-numeric: tabular-nums; }
+.tile-l { font-size: 15px; font-weight: 600; color: var(--label-2); letter-spacing: -.24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.row {
+  position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px;
+  padding: 8px 16px; text-align: left;
+}
+.row + .row::before { content: ""; position: absolute; top: 0; right: 0; left: 60px; border-top: var(--hair) solid var(--sep); }
+.row:active { background: var(--surface-2); }
+.row-ic { width: 32px; height: 32px; border-radius: 50%; background: var(--surface-3); display: grid; place-items: center; font-size: 17px; flex-shrink: 0; }
+.row-ic.plus { background: rgba(10,132,255,.18); color: var(--blue); font-size: 18px; font-weight: 600; }
+.row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.row-t { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row.add .row-t { color: var(--blue); }
+.row-s { font-size: 13px; color: var(--label-2); letter-spacing: -.08px; }
+.row-n { color: var(--label-2); font-size: 17px; font-variant-numeric: tabular-nums; }
+.row .chev { width: 8px; color: var(--label-3); flex-shrink: 0; }
+
+/* ---------- Mikrofon-Knöpfe ---------- */
+.field { position: relative; }
+.field input { padding-right: 40px; }
+.field-mic { position: absolute; right: 4px; top: 4px; width: 28px; height: 28px; border-radius: 50%; color: var(--label-2); display: grid; place-items: center; }
+.field-mic svg { width: 19px; height: 19px; }
+.field-mic:active { color: var(--blue); }
+.fab {
+  position: fixed; z-index: 7; right: 20px; bottom: calc(env(safe-area-inset-bottom) + 22px);
+  width: 68px; height: 68px; border-radius: 50%;
+  background: var(--blue); color: #fff; display: grid; place-items: center;
+  box-shadow: 0 10px 30px rgba(10,132,255,.35), 0 2px 8px rgba(0,0,0,.5);
+  transition: transform .15s;
+}
+.fab svg { width: 30px; height: 30px; }
+.fab:active { transform: scale(.92); }
+body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bottom) + 120px); }
+
+/* ---------- Diktier-Bildschirm ---------- */
+.voice {
+  position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column;
+  background: rgba(0,0,0,.94);
+  -webkit-backdrop-filter: blur(30px) saturate(150%); backdrop-filter: blur(30px) saturate(150%);
+  padding: env(safe-area-inset-top) 20px calc(env(safe-area-inset-bottom) + 24px);
+  animation: fade .2s;
+}
+.v-top { height: 50px; display: flex; align-items: center; }
+.v-center { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 14px; max-width: 560px; width: 100%; margin: 0 auto; min-height: 0; }
+.v-status { font-size: 15px; color: var(--label-2); font-weight: 500; }
+.v-text { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: .36px; min-height: 34px; overflow-wrap: anywhere; }
+.v-input { width: 100%; }
+.v-input textarea {
+  width: 100%; border: 0; outline: none; resize: none; border-radius: 14px; background: var(--surface);
+  padding: 14px 16px; font-size: 20px; line-height: 26px;
+}
+.v-input .cta { display: block; margin: 16px auto 0; height: 48px; padding: 0 28px; border-radius: 24px; background: var(--blue); color: #fff; font-weight: 600; }
+.v-bottom { display: flex; flex-direction: column; align-items: center; gap: 16px; padding-bottom: 8px; }
+.v-mic {
+  position: relative; width: 84px; height: 84px; border-radius: 50%; background: var(--surface-3); color: #fff;
+  display: grid; place-items: center;
+}
+.v-mic svg { width: 36px; height: 36px; position: relative; z-index: 1; }
+.v-mic.listening { background: var(--red); }
+.v-mic.listening::before, .v-mic.listening::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--red); opacity: .35;
+  animation: ripple 1.6s ease-out infinite;
+}
+.v-mic.listening::after { animation-delay: .8s; }
+@keyframes ripple { to { transform: scale(1.8); opacity: 0; } }
+.v-hint { font-size: 15px; color: var(--label-3); }
+.v-switch { color: var(--blue); font-size: 15px; height: 36px; }
+.v-result { width: 100%; }
+.v-card { background: var(--surface); border-radius: 16px; padding: 22px 18px 18px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.v-check { width: 44px; height: 44px; border-radius: 50%; background: var(--green); display: grid; place-items: center; margin-bottom: 6px; }
+.v-check svg { width: 24px; height: 24px; }
+.v-card-t { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+.v-card-s { font-size: 15px; color: var(--label-2); }
+.v-card-n { font-size: 13px; color: var(--orange); margin-top: 4px; }
+.v-actions { display: flex; gap: 10px; margin-top: 14px; }
+.v-actions .btn { flex: 1; height: 48px; border-radius: 14px; background: var(--surface-2); font-weight: 600; color: var(--label); }
+.v-actions .btn.primary { background: var(--blue); color: #fff; }
+.v-result:not([hidden]) ~ * { display: none; }
+
+.v-text.small { font-size: 15px; line-height: 20px; font-weight: 400; color: var(--label-3); letter-spacing: -.24px; order: 3; }
+.v-center .v-result { order: 2; }

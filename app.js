@@ -23,7 +23,7 @@ const EMOJIS = ['🏠','💼','🎓','💪','❤️','👨‍👩‍👧','🛒'
 /* ---------- State ---------- */
 let db = normalize(LS.get(DATA_KEY, null));
 let settings = Object.assign({ owner: '', repo: 'todo-data', path: 'todos.json', branch: '', token: '' }, LS.get(SET_KEY, {}));
-let ui = Object.assign({ view: 'space', spaceId: null, pageId: null, showDone: false }, LS.get(UI_KEY, {}));
+let ui = Object.assign({ view: 'home', spaceId: null, pageId: null, showDone: false }, LS.get(UI_KEY, {}));
 let sync = Object.assign({ lastSync: 0, dirty: false }, LS.get(SYNC_KEY, {}), { status: 'idle', error: '' });
 let changeSeq = 0;
 const pendingHide = new Map();   // taskId -> {timer, start}
@@ -146,9 +146,10 @@ const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-wid
 
 function ensureValidView() {
   const sp = spaces();
-  if (ui.view === 'inbox' && !alive(db.tasks).some(isOrphan)) ui.view = 'space';
+  if (ui.view === 'inbox' && !alive(db.tasks).some(isOrphan)) ui.view = 'home';
+  if (!['home', 'due', 'inbox', 'space'].includes(ui.view)) ui.view = 'home';
   if (ui.view === 'space') {
-    if (!getSpace(ui.spaceId)) { ui.spaceId = sp[0]?.id ?? null; ui.pageId = null; }
+    if (!getSpace(ui.spaceId)) { ui.view = 'home'; ui.spaceId = null; ui.pageId = null; }
     if (ui.pageId && (!getPage(ui.pageId) || getPage(ui.pageId).spaceId !== ui.spaceId)) ui.pageId = null;
   }
 }
@@ -159,7 +160,9 @@ function render() {
   ensureValidView();
   renderHeader();
   renderList();
-  $('#addbar').hidden = !(ui.view === 'space' && ui.spaceId);
+  const inSpace = ui.view === 'space' && !!ui.spaceId;
+  $('#addbar').hidden = !inSpace;
+  $('#fab').hidden = inSpace;
 }
 
 function renderHeader() {
@@ -168,7 +171,8 @@ function renderHeader() {
   const td = today();
   const dueCount = tasks.filter(t => !t.done && t.due && t.due <= td && !isOrphan(t)).length;
   const orphans = tasks.filter(t => !t.done && isOrphan(t)).length;
-  let html = `<button class="chip ${ui.view === 'due' ? 'active' : ''}" data-view="due"><span class="em">📅</span>Fällig${dueCount ? ` <span class="n">${dueCount}</span>` : ''}</button>`;
+  let html = `<button class="chip ${ui.view === 'home' ? 'active' : ''}" data-view="home"><span class="em">${ICON_HOME}</span>Übersicht</button>`;
+  html += `<button class="chip ${ui.view === 'due' ? 'active' : ''}" data-view="due"><span class="em">📅</span>Fällig${dueCount ? ` <span class="n">${dueCount}</span>` : ''}</button>`;
   if (orphans) html += `<button class="chip ${ui.view === 'inbox' ? 'active' : ''}" data-view="inbox"><span class="em">📥</span>Eingang <span class="n">${orphans}</span></button>`;
   for (const s of sp) {
     const n = openCount(tasks.filter(t => t.spaceId === s.id && !isOrphan(t)));
@@ -192,7 +196,8 @@ function renderHeader() {
 
   // Titel (Large Title)
   let title = '';
-  if (ui.view === 'due') title = 'Fällig';
+  if (ui.view === 'home') title = 'Übersicht';
+  else if (ui.view === 'due') title = 'Fällig';
   else if (ui.view === 'inbox') title = 'Eingang';
   else if (ui.spaceId) {
     const s = getSpace(ui.spaceId), p = ui.pageId && getPage(ui.pageId);
@@ -240,9 +245,52 @@ const group = (items, ctx) => items.length ? `<div class="group">${items.map(t =
 const EMPTY_ICON = '<svg class="icon" viewBox="0 0 56 56" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="28" cy="28" r="24"/><path d="M18 28.5l7 7 13-14"/></svg>';
 const emptyState = (title, text, cta) => `<div class="empty">${EMPTY_ICON}<div class="title">${esc(title)}</div><div>${text}</div>${cta || ''}</div>`;
 
+const ICON_HOME = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>';
+const TILE_ICONS = {
+  today: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="5.5" width="16" height="14.5" rx="3"/><path d="M4 10h16M8.5 3.5v3M15.5 3.5v3"/></svg>',
+  over: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 6.5v7"/><circle cx="12" cy="17.6" r=".6" fill="#fff"/></svg>',
+  open: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M8.5 7h11M8.5 12h11M8.5 17h11"/><circle cx="4.6" cy="7" r=".9" fill="#fff"/><circle cx="4.6" cy="12" r=".9" fill="#fff"/><circle cx="4.6" cy="17" r=".9" fill="#fff"/></svg>',
+  done: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 12.5l4 4L18.5 8"/></svg>'
+};
+function homeHTML(tasks) {
+  const td = today();
+  const live = tasks.filter(t => !isOrphan(t));
+  const open = live.filter(t => !t.done);
+  const dueToday = open.filter(t => t.due === td).length;
+  const overdue = open.filter(t => t.due && t.due < td).length;
+  const doneToday = live.filter(t => t.done && t.doneAt && isoDay(new Date(t.doneAt)) === td).length;
+  const tile = (key, color, n, label, view) => `<button class="tile" ${view ? `data-view="${view}"` : 'data-tile=""'}>
+      <span class="tile-ic" style="background:${color}">${TILE_ICONS[key]}</span><span class="tile-n">${n}</span><span class="tile-l">${label}</span></button>`;
+  const dateLine = new Date().toLocaleDateString('de-CH', { weekday: 'long', day: 'numeric', month: 'long' });
+  let html = `<div class="date-line">${esc(dateLine)}</div>
+    <div class="tiles">
+      ${tile('today', 'var(--blue)', dueToday, 'Heute fällig', 'due')}
+      ${tile('over', 'var(--red)', overdue, 'Überfällig', 'due')}
+      ${tile('open', '#636366', open.length, 'Offen gesamt', '')}
+      ${tile('done', 'var(--green)', doneToday, 'Heute erledigt', '')}
+    </div>`;
+  const focus = tasks.filter(t => !isOrphan(t) && t.due && t.due <= td && visible(t)).sort(sortTasks);
+  if (focus.length) {
+    html += `<div class="section-h">Heute & überfällig</div>` + group(focus.slice(0, 6), true);
+    if (focus.length > 6) html += `<button class="done-toggle" data-view="due">Alle ${focus.length} anzeigen</button>`;
+  }
+  html += `<div class="section-h">Bereiche</div><div class="group">`;
+  for (const s of spaces()) {
+    const n = openCount(tasks.filter(t => t.spaceId === s.id && !isOrphan(t)));
+    const pc = pagesOf(s.id).length;
+    html += `<button class="row" data-space="${esc(s.id)}"><span class="row-ic">${esc(s.emoji || '📁')}</span>
+      <span class="row-main"><span class="row-t">${esc(s.name)}</span>${pc ? `<span class="row-s">${pc} ${pc === 1 ? 'Seite' : 'Seiten'}</span>` : ''}</span>
+      <span class="row-n">${n || ''}</span>${CHEV}</button>`;
+  }
+  html += `<button class="row add" data-action="new-space"><span class="row-ic plus">＋</span><span class="row-main"><span class="row-t">Neuer Bereich</span></span></button></div>`;
+  if (!spaces().length) html += `<p class="footer-note">Tipp: Tippe unten rechts aufs Mikrofon und sag zum Beispiel „Privat: Autoöl wechseln, morgen“.</p>`;
+  return html;
+}
+
 function renderList() {
   const el = $('#list');
   const tasks = alive(db.tasks);
+  if (ui.view === 'home') { el.innerHTML = homeHTML(tasks); return; }
   if (!spaces().length && ui.view !== 'inbox') {
     el.innerHTML = emptyState('Willkommen', 'Lege deinen ersten Bereich an,<br>zum Beispiel „🏠 Privat“.', '<button class="cta" data-action="new-space">Bereich erstellen</button>');
     return;
@@ -498,7 +546,7 @@ function settingsSheet() {
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-view],[data-space],[data-page],[data-action],[data-check],[data-edit]');
   if (!el || el.closest('#sheet')) return;
-  if (el.dataset.view) { ui.view = el.dataset.view; saveUI(); render(); }
+  if (el.dataset.view !== undefined && el.dataset.view !== '') { ui.view = el.dataset.view; saveUI(); render(); window.scrollTo(0, 0); }
   else if (el.dataset.space !== undefined) { ui.view = 'space'; if (ui.spaceId !== el.dataset.space) { ui.spaceId = el.dataset.space; ui.pageId = null; } saveUI(); render(); window.scrollTo(0, 0); }
   else if (el.dataset.page !== undefined) { ui.pageId = el.dataset.page || null; saveUI(); render(); window.scrollTo(0, 0); }
   else if (el.dataset.check) toggleTask(el.dataset.check);
@@ -666,5 +714,6 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
 
+ui.view = 'home'; saveUI();
 render();
 runSync();

@@ -22,7 +22,7 @@ Falls noch keins: https://github.com/signup
 1. https://github.com/new
 2. Name: `todo-app`, **Public**, „Add a README file“ anhaken → erstellen
 3. Im Repo: **Add file → Upload files** → alle Dateien aus dem ZIP hineinziehen
-   (`index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, alle `.png`) → „Commit changes“
+   (`index.html`, `app.js`, `voice.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, alle `.png`) → „Commit changes“
 4. **Settings → Pages** → Source: „Deploy from a branch“, Branch: `main`, Ordner `/ (root)` → Save
 5. Nach ca. 1 Minute läuft die App unter:
    `https://DEIN-BENUTZERNAME.github.io/todo-app/`
@@ -50,6 +50,13 @@ In claude.ai unter **Einstellungen → Konnektoren / Integrationen** GitHub verb
 ---
 
 ## Bedienung
+- **Übersicht** (Startseite): offene, heute fällige, überfällige und heute erledigte Aufgaben, darunter alle Bereiche
+- **Diktieren:** blauer Mikrofon-Knopf unten rechts (in Bereichen: Mikrofon im Eingabefeld). Beispiele:
+  - „Im Bereich Privat füge To-Do hinzu Autoöl wechseln“
+  - „Arbeit: Offerte schicken morgen um 10 Uhr“
+  - „Einkaufen Milch und Brot“ (Unterseiten werden auch erkannt)
+  - Unbekannter oder kein Bereich → landet im Bereich **⏳ Temp**
+  - Erkannt werden: heute, morgen, übermorgen, nächste Woche, Wochentage, „in 3 Tagen“, „am 24.12.“, „um 14:30“
 - **Bereiche** (oben, mit Emoji): „＋ Bereich“ · Bearbeiten/Löschen/Reihenfolge über den Titel (⋯)
 - **Unterseiten** (zweite Zeile): „＋ Seite“ · „Allgemein“ = Aufgaben direkt im Bereich
 - **Termin:** 📅 links neben dem Eingabefeld, oder Aufgabe antippen
