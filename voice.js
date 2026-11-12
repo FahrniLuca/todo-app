@@ -7,84 +7,10 @@
    ========================================================================= */
 
 const TEMP_NAME = 'Temp', TEMP_EMOJI = '⏳';
-const L = '(?<![\\p{L}\\d])', R = '(?![\\p{L}\\d])';       // Wortgrenzen inkl. Umlaute
-const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const WEEKDAYS = ['sonntag', 'montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag'];
-const NUMS = { ein: 1, eins: 1, einem: 1, einen: 1, zwei: 2, drei: 3, vier: 4, fünf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12, vierzehn: 14 };
-const toNum = w => /^\d+$/.test(w) ? +w : NUMS[w.toLowerCase()];
-
+// Der eigentliche Parser liegt in parser.js (gemeinsam mit dem Siri-Kurzbefehl)
 function parseVoice(input) {
-  let s = ' ' + String(input || '').replace(/\s+/g, ' ').trim() + ' ';
-  const cut = (re) => { let m = null; s = s.replace(re, (...a) => { m = m || a; return ' '; }); return m; };
-  let due = null, time = null;
-
-  /* ---- Uhrzeit ---- */
-  let m = cut(new RegExp(`${L}(?:um|ab|gegen)\\s+(\\d{1,2})(?:[:.](\\d{2})|\\s+uhr(?:\\s+(\\d{1,2}))?)?(?:\\s+uhr)?${R}`, 'iu'))
-       || cut(new RegExp(`${L}(\\d{1,2})(?:[:.](\\d{2}))?\\s+uhr(?:\\s+(\\d{1,2}))?${R}`, 'iu'));
-  if (m) {
-    const h = +m[1], min = +(m[2] || m[3] || 0);
-    if (h < 24 && min < 60) time = `${pad(h)}:${pad(min)}`;
-  }
-  /* ---- Datum ---- */
-  if (cut(new RegExp(`${L}übermorgen${R}`, 'iu'))) due = addDays(2);
-  else if (cut(new RegExp(`${L}(?:morgen)(?:\\s+(?:früh|frueh|vormittag|nachmittag|abend))?${R}`, 'iu'))) due = addDays(1);
-  else if (cut(new RegExp(`${L}(?:heute)(?:\\s+(?:abend|nachmittag|morgen|mittag))?${R}`, 'iu'))) due = today();
-  else if (cut(new RegExp(`${L}(?:nächste|naechste|kommende)n?\\s+woche${R}`, 'iu'))) due = addDays(7);
-  else if ((m = cut(new RegExp(`${L}in\\s+(\\d+|\\p{L}+)\\s+(tag|tagen|woche|wochen)${R}`, 'iu'))) && toNum(m[1])) {
-    due = addDays(toNum(m[1]) * (/woche/i.test(m[2]) ? 7 : 1));
-  }
-  else if ((m = cut(new RegExp(`${L}(?:am\\s+|nächsten\\s+|naechsten\\s+|diesen\\s+|kommenden\\s+)?(${WEEKDAYS.join('|')})${R}`, 'iu')))) {
-    const target = WEEKDAYS.indexOf(m[1].toLowerCase());
-    let diff = (target - new Date().getDay() + 7) % 7; if (diff === 0) diff = 7;
-    due = addDays(diff);
-  }
-  else if ((m = cut(new RegExp(`${L}(?:am\\s+)?(\\d{1,2})\\.\\s?(\\d{1,2})\\.?(\\d{2,4})?${R}`, 'iu')))) {
-    const d = new Date(); let y = m[3] ? +m[3] : d.getFullYear(); if (y < 100) y += 2000;
-    const cand = `${y}-${pad(+m[2])}-${pad(+m[1])}`;
-    due = !m[3] && cand < today() ? `${y + 1}-${pad(+m[2])}-${pad(+m[1])}` : cand;
-  }
-  if (time && !due) {
-    const [h, mi] = time.split(':').map(Number), n = new Date();
-    due = (h * 60 + mi > n.getHours() * 60 + n.getMinutes()) ? today() : addDays(1);
-  }
-
-  /* ---- Bereich & Seite ---- */
-  const PREP = '(?:(?:im|in|in den|in die|ins|zum|zur|zu|für|fuer|bei|unter|auf)\\s+)?';
-  const findIn = (items, word) => {
-    const sorted = [...items].sort((a, b) => b.name.length - a.name.length);
-    for (const it of sorted) {
-      const re = new RegExp(`${L}${PREP}(?:(?:dem|der|den)\\s+)?(?:${word}\\s+)?${reEsc(it.name)}${R}\\s*[:,]?`, 'iu');
-      if (re.test(s)) { s = s.replace(re, ' '); return it; }
-    }
-    return null;
-  };
-  let space = findIn(spaces(), '(?:bereich|liste)');
-  let page = null;
-  if (space) page = findIn(pagesOf(space.id), '(?:seite|unterseite|liste)');
-  else {
-    page = findIn(alive(db.pages).filter(p => getSpace(p.spaceId)), '(?:seite|unterseite|liste)');
-    if (page) space = getSpace(page.spaceId);
-  }
-  let unknownSpace = null;
-  if (!space && (m = cut(new RegExp(`${L}${PREP}(?:dem\\s+)?bereich\\s+(\\p{L}[\\p{L}\\d-]*)${R}\\s*[:,]?`, 'iu')))) unknownSpace = m[1];
-
-  /* ---- Füllwörter entfernen ---- */
-  const fill = [
-    `(?:füge|fuege|füg|fueg|trag|trage|setz|setze|schreib|schreibe|notier|notiere|mach|mache|leg|lege)(?:\\s+(?:mir|bitte|mal|noch))*(?:\\s+(?:ein|eine|einen|ein\\s+neues|eine\\s+neue|neues|neue))?(?:\\s+(?:to-?\\s?do|todo|aufgabe|erinnerung|punkt|eintrag))?`,
-    `(?:neues|neue|neuer)\\s+(?:to-?\\s?do|todo|aufgabe|erinnerung|eintrag)`,
-    `(?:to-?\\s?do|todo)`,
-    `hinzu(?:fügen|fuegen)?`, `eintragen`, `notieren`, `aufschreiben`,
-    `erinnere?\\s+mich(?:\\s+daran)?(?:\\s*,?\\s*(?:dass|das)\\s+ich)?`,
-    `(?:auf|in)\\s+(?:die|meine)\\s+(?:to-?\\s?do-?)?liste`, `zur\\s+liste`,
-    `bitte`, `danke`, `ok(?:ay)?\\s+claude`
-  ];
-  for (const f of fill) s = s.replace(new RegExp(`${L}${f}${R}`, 'giu'), ' ');
-  s = s.replace(new RegExp(`^\\s*(?:dass|das|und|zu|ich|mir|ein|eine|einen|den|die|das)${R}`, 'iu'), ' ');
-  s = s.replace(/\s+/g, ' ').replace(/^[\s,:;.\-–]+|[\s,:;.\-–]+$/g, '');
-  // „… anzurufen“ → „… anrufen“ (Infinitiv mit zu nach „erinnere mich daran“)
-  s = s.replace(/(\p{L}+)zu(rufen|machen|kaufen|holen|bringen|zahlen|schicken|senden|bestellen|räumen|putzen|waschen|wechseln|melden|buchen)$/iu, '$1$2');
-  const title = s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
-  return { title, due, time, space, page, unknownSpace };
+  const r = TodoParser.parse(input, { spaces: spaces(), pages: alive(db.pages), today: today() });
+  return r;
 }
 
 function ensureTempSpace() {
@@ -93,12 +19,13 @@ function ensureTempSpace() {
   return t;
 }
 
-function createTask({ title, spaceId, pageId, due, time }) {
+function createTask({ title, spaceId, pageId, due, time, repeat }) {
   const space = spaceId === '__temp__' || !getSpace(spaceId) ? ensureTempSpace() : getSpace(spaceId);
   const page = pageId && getPage(pageId) && getPage(pageId).spaceId === space.id ? getPage(pageId) : null;
   const t = touch({
     id: uid('t'), spaceId: space.id, pageId: page ? page.id : null, title, notes: '',
-    due: due || null, time: due && time ? time : null, done: false, doneAt: null, createdAt: now(), createdBy: 'voice'
+    due: due || (repeat ? today() : null), time: (due || repeat) && time ? time : null, repeat: repeat || null,
+    done: false, doneAt: null, createdAt: now(), createdBy: 'voice'
   });
   db.tasks.push(t); commit();
   return { task: t, space, page };
@@ -107,7 +34,7 @@ function createTask({ title, spaceId, pageId, due, time }) {
 function addFromVoice(text) {
   const p = parseVoice(text);
   if (!p.title) return null;
-  const r = createTask({ title: p.title, spaceId: p.space ? p.space.id : '__temp__', pageId: p.page ? p.page.id : null, due: p.due, time: p.time });
+  const r = createTask({ title: p.title, spaceId: p.space ? p.space.id : '__temp__', pageId: p.page ? p.page.id : null, due: p.due, time: p.time, repeat: p.repeat });
   return Object.assign(r, { unknownSpace: p.unknownSpace });
 }
 
@@ -260,6 +187,7 @@ function showPreview(text) {
           <label class="cell"><span class="lbl">Seite</span><select id="pPage">${pageOpts(spaceId, p.page ? p.page.id : null)}</select>${CHEV}</label>
           <div class="cell"><span class="lbl">Datum</span><input type="date" id="pDue" value="${esc(p.due || '')}"></div>
           <div class="cell"><span class="lbl">Uhrzeit</span><input type="time" id="pTime" value="${esc(p.time || '')}"></div>
+          <label class="cell"><span class="lbl">Wiederholen</span><select id="pRepeat">${repeatOptions(p.repeat)}</select>${CHEV}</label>
         </div>
         ${p.unknownSpace ? `<p class="footer-note warn">Bereich „${esc(p.unknownSpace)}“ gibt es nicht, darum ${TEMP_EMOJI} ${TEMP_NAME}.</p>` : ''}
         <p class="footer-note">„${esc(text)}“</p>
@@ -290,7 +218,7 @@ function showPreview(text) {
     const title = $('#pTitle').value.trim();
     if (!title) { pause(); $('#pTitle').focus(); return; }
     const due = $('#pDue').value || null;
-    const r = createTask({ title, spaceId: $('#pSpace').value, pageId: $('#pPage').value || null, due, time: $('#pTime').value || null });
+    const r = createTask({ title, spaceId: $('#pSpace').value, pageId: $('#pPage').value || null, due, time: $('#pTime').value || null, repeat: repeatFromValue($('#pRepeat').value) });
     showSaved(r);
   }
   $('#vSave').onclick = save;

@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '1.6';
+const APP_VERSION = '2.0';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -87,6 +87,27 @@ function sortTasks(a, b) {
   return (a.createdAt ?? 0) - (b.createdAt ?? 0);
 }
 
+/* ---------- Wiederholungen ---------- */
+const REPEAT_CHOICES = [['', 'Nie'], ['daily', 'Täglich'], ['weekdays', 'Werktags (Mo–Fr)'], ['weekly', 'Wöchentlich'], ['biweekly', 'Alle 2 Wochen'], ['monthly', 'Monatlich'], ['yearly', 'Jährlich']];
+function repeatValue(rep) {
+  if (!rep) return '';
+  if (rep.freq === 'weekly' && (rep.interval || 1) === 2) return 'biweekly';
+  if ((rep.interval || 1) === 1) return rep.freq;
+  return 'custom';
+}
+function repeatFromValue(v) {
+  if (!v) return null;
+  if (v === 'biweekly') return { freq: 'weekly', interval: 2 };
+  if (v === 'custom') return null;
+  return { freq: v, interval: 1 };
+}
+function repeatOptions(rep) {
+  const v = repeatValue(rep);
+  let html = REPEAT_CHOICES.map(([k, l]) => `<option value="${k}" ${k === v ? 'selected' : ''}>${l}</option>`).join('');
+  if (v === 'custom') html += `<option value="custom" selected>${esc(TodoParser.repeatLabel(rep))}</option>`;
+  return html;
+}
+
 /* ---------- Mutations ---------- */
 function addSpace(name, emoji) {
   const s = touch({ id: uid('s'), name, emoji, order: spaces().length, createdAt: now() });
@@ -128,6 +149,17 @@ function toggleTask(id) {
   const t = getTask(id); if (!t) return;
   if (!t.done) {
     t.done = true; t.doneAt = now(); touch(t);
+    let nextMsg = '';
+    if (t.repeat) {
+      const nextDue = TodoParser.nextOccurrence(t.due, t.repeat, today());
+      const n = touch({
+        id: uid('t'), spaceId: t.spaceId, pageId: t.pageId || null, title: t.title, notes: t.notes || '',
+        due: nextDue, time: t.time || null, repeat: TodoParser.carryRepeat(t.due, t.repeat), done: false, doneAt: null,
+        createdAt: now(), createdBy: t.createdBy || 'user', repeatOf: t.repeatOf || t.id
+      });
+      db.tasks.push(n); t.nextId = n.id;
+      nextMsg = ' · nächste ' + dueInfo(n).label;
+    }
     const start = now();
     const timer = setTimeout(() => {
       const el = document.querySelector(`.task[data-id="${id}"]`);
@@ -135,9 +167,14 @@ function toggleTask(id) {
       setTimeout(() => { pendingHide.delete(id); render(); }, 300);
     }, HIDE_AFTER_MS);
     pendingHide.set(id, { timer, start });
-    showToast('Erledigt', 'Widerrufen', () => toggleTask(id), HIDE_AFTER_MS);
+    showToast('Erledigt' + nextMsg, 'Widerrufen', () => toggleTask(id), HIDE_AFTER_MS);
   } else {
     t.done = false; t.doneAt = null; touch(t);
+    if (t.nextId) {   // beim Widerrufen die schon erzeugte nächste Instanz wieder entfernen
+      const n = getTask(t.nextId);
+      if (n && !n.done && !n.deleted) touch(Object.assign(n, { deleted: true }));
+      delete t.nextId;
+    }
     const p = pendingHide.get(id); if (p) { clearTimeout(p.timer); pendingHide.delete(id); }
     hideToast();
   }
@@ -230,6 +267,7 @@ function taskHTML(t, ctx) {
   const meta = [];
   if (di) meta.push(`<span class="due ${t.done ? '' : di.cls}">${ICON_CAL}${esc(di.label)}</span>`);
   if (ctx) meta.push(`<span>${esc(ctx)}</span>`);
+  if (t.repeat) meta.push(`<span class="rep">↻ ${esc(TodoParser.repeatLabel(t.repeat))}</span>`);
   if (t.notes) meta.push(`<span>${ICON_NOTE}</span>`);
   if (t.createdBy === 'claude') meta.push('<span class="by-claude">✦ Claude</span>');
   const p = pendingHide.get(t.id);
@@ -528,6 +566,7 @@ function taskSheet(t) {
         <button type="button" data-q="week">Nächste Woche</button><button type="button" data-q="none">Keins</button></div></div>
       <div class="cell"><span class="lbl">Datum</span><input type="date" id="due" value="${esc(t.due || '')}"></div>
       <div class="cell"><span class="lbl">Uhrzeit</span><input type="time" id="time" value="${esc(t.time || '')}"></div>
+      <label class="cell"><span class="lbl">Wiederholen</span><select id="repeat">${repeatOptions(t.repeat)}</select>${CHEV}</label>
     </div>
     <div class="section-h">Liste</div>
     <div class="form">
@@ -556,8 +595,11 @@ function taskSheet(t) {
     s.querySelector('#save').onclick = () => {
       const title = s.querySelector('#tTitle').value.trim(); if (!title) { s.querySelector('#tTitle').focus(); return; }
       const due = dueEl.value || null;
+      const rv = s.querySelector('#repeat').value;
+      const repeat = rv === 'custom' ? t.repeat : repeatFromValue(rv);
+      const due2 = due || (repeat ? today() : null);
       Object.assign(t, {
-        title, notes: s.querySelector('#notes').value.trim(), due, time: due ? (timeEl.value || null) : null,
+        title, notes: s.querySelector('#notes').value.trim(), due: due2, time: due2 ? (timeEl.value || null) : null, repeat,
         spaceId: s.querySelector('#space').value || t.spaceId, pageId: s.querySelector('#page').value || null
       });
       touch(t); closeSheet(); commit();
@@ -584,6 +626,13 @@ function settingsSheet() {
     </div>
     <p class="footer-note">Der Token bleibt nur auf diesem Gerät. Nötige Berechtigung: <code>Contents: Read and write</code>, nur für das Daten-Repo.</p>
     <div class="form" style="margin-top:22px"><div class="cell button-cell action" id="syncNow">Jetzt synchronisieren</div></div>
+    <div class="section-h">Mitteilungen</div>
+    <div class="form">
+      <div class="status-row" id="pushStatus">Wird geprüft …</div>
+      <div class="cell button-cell action" id="pushToggle" hidden></div>
+      <div class="cell button-cell action left" id="pushTest" hidden>Test-Mitteilung auf diesem Gerät</div>
+    </div>
+    <p class="footer-note">Du bekommst eine Mitteilung zur eingestellten Uhrzeit einer Aufgabe und jeden Morgen um 7:30 eine Übersicht, was heute fällig ist. Kann bis zu ca. 10 Minuten später kommen.</p>
     <div class="section-h">Diktieren über</div>
     <div class="form">
       <div class="cell button-cell" data-dict="keyboard"><span class="lbl">iPhone-Tastatur</span><span class="tick">${settings.dictation !== 'mic' ? '✓' : ''}</span></div>
@@ -603,6 +652,26 @@ function settingsSheet() {
       LS.set(SET_KEY, settings); sync.status = 'idle'; sync.error = '';
     };
     s.querySelector('#save').onclick = () => { apply(); closeSheet(); render(); runSync(); };
+    const pStat = s.querySelector('#pushStatus'), pTog = s.querySelector('#pushToggle'), pTest = s.querySelector('#pushTest');
+    const refreshPush = async () => {
+      if (!pushSupported()) { pStat.textContent = isStandalone() ? 'Auf diesem Gerät nicht verfügbar (iOS 16.4+ nötig).' : 'Nur in der App vom Home-Bildschirm verfügbar.'; pTog.hidden = pTest.hidden = true; return; }
+      let sub = null; try { sub = await currentSubscription(); } catch (e) { }
+      const on = !!sub && Notification.permission === 'granted';
+      pStat.textContent = on ? '✓ Aktiv auf diesem Gerät' : Notification.permission === 'denied' ? 'Blockiert. Erlauben unter iPhone-Einstellungen → Mitteilungen → To-Do.' : 'Aus';
+      pTog.hidden = Notification.permission === 'denied'; pTog.textContent = on ? 'Mitteilungen ausschalten' : 'Mitteilungen einschalten';
+      pTog.classList.toggle('danger', on); pTest.hidden = !on;
+      pTog.onclick = async () => {
+        pTog.textContent = '…';
+        try { if (on) await disablePush(); else await enablePush(); }
+        catch (err) { showToast(err.message || String(err)); }
+        refreshPush();
+      };
+    };
+    refreshPush();
+    pTest.onclick = async () => {
+      try { const reg = await navigator.serviceWorker.ready; await reg.showNotification('To-Do', { body: 'So sehen Erinnerungen aus ✓', icon: 'icon-192.png', tag: 'test' }); }
+      catch (e) { showToast('Test fehlgeschlagen'); }
+    };
     s.querySelectorAll('[data-dict]').forEach(c => c.onclick = () => {
       settings.dictation = c.dataset.dict; LS.set(SET_KEY, settings);
       s.querySelectorAll('[data-dict]').forEach(x => x.querySelector('.tick').textContent = x === c ? '✓' : '');
@@ -839,6 +908,70 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);
 // Mitternacht / Fälligkeiten aktualisieren
 setInterval(() => { if (!pendingHide.size && $('#sheetWrap').hidden) renderHeader(); }, 60000);
+
+/* ---------- Push-Mitteilungen ----------
+   Das Abo dieses Geräts wird in push/subscriptions.json im Daten-Repo gespeichert.
+   Eine GitHub-Action prüft alle 5 Minuten, was fällig ist, und schickt die Mitteilung. */
+const VAPID_PUBLIC = 'BBsxI6_8GDNISmMVoG1IxdcDe2WjMB3EGoSNrVijAThBoGmx6-9Vh55Uee2CHKxZeAX6Jl20Cj2I7irHhVmnta0';
+const SUBS_PATH = 'push/subscriptions.json';
+const isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function b64urlToBytes(s) {
+  const pad = '='.repeat((4 - s.length % 4) % 4); const b = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+function fileUrl(path) {
+  return `https://api.github.com/repos/${encodeURIComponent(settings.owner)}/${encodeURIComponent(settings.repo)}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;
+}
+async function readJsonFile(path, fallback) {
+  const res = await fetch(fileUrl(path) + '?t=' + now(), { cache: 'no-store', headers: { Authorization: `Bearer ${settings.token}`, Accept: 'application/vnd.github+json' } });
+  if (res.status === 404) return { data: fallback, sha: null };
+  if (!res.ok) throw new Error(await errText(res));
+  const j = await res.json();
+  return { data: JSON.parse(b64decode(j.content || '') || 'null') ?? fallback, sha: j.sha };
+}
+async function updateJsonFile(path, fallback, mutate, message) {
+  for (let i = 0; i < 4; i++) {
+    const { data, sha } = await readJsonFile(path, fallback);
+    const next = mutate(data);
+    const body = { message, content: b64encode(JSON.stringify(next, null, 2) + '\n') }; if (sha) body.sha = sha;
+    const res = await fetch(fileUrl(path), { method: 'PUT', headers: { Authorization: `Bearer ${settings.token}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.ok) return next;
+    if (res.status !== 409 && res.status !== 422) throw new Error(await errText(res));
+    await new Promise(r => setTimeout(r, 500 * (i + 1)));
+  }
+  throw new Error('Konflikt beim Speichern – bitte nochmals versuchen.');
+}
+const deviceName = () => /iPhone/.test(navigator.userAgent) ? 'iPhone' : /iPad/.test(navigator.userAgent) ? 'iPad' : /Android/.test(navigator.userAgent) ? 'Android' : /Mac/.test(navigator.userAgent) ? 'Mac' : 'Gerät';
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function enablePush() {
+  if (!pushSupported()) throw new Error(isStandalone() ? 'Dieses Gerät unterstützt keine Mitteilungen (iOS 16.4 oder neuer nötig).' : 'Mitteilungen gehen nur in der App vom Home-Bildschirm, nicht in Safari.');
+  if (!configured()) throw new Error('Zuerst GitHub verbinden (Benutzer + Token).');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Mitteilungen wurden nicht erlaubt. Ändern unter Einstellungen → Mitteilungen → To-Do.');
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(VAPID_PUBLIC) });
+  const j = sub.toJSON();
+  await updateJsonFile(SUBS_PATH, [], list => {
+    list = (Array.isArray(list) ? list : []).filter(x => x.endpoint !== j.endpoint);
+    list.push({ endpoint: j.endpoint, keys: j.keys, device: deviceName(), createdAt: new Date().toISOString() });
+    return list;
+  }, 'To-Do App: Mitteilungen aktiviert');
+  return true;
+}
+async function disablePush() {
+  const sub = await currentSubscription();
+  if (sub) {
+    const ep = sub.endpoint;
+    try { await sub.unsubscribe(); } catch (e) { }
+    if (configured()) await updateJsonFile(SUBS_PATH, [], list => (Array.isArray(list) ? list : []).filter(x => x.endpoint !== ep), 'To-Do App: Mitteilungen deaktiviert');
+  }
+}
 
 /* ---------- Offline (Service Worker) ---------- */
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {

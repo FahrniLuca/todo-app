@@ -421,3 +421,5 @@ body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bo
 .row.lifting { z-index: 3; background: var(--surface-3) !important; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
 .row.lifting::before, .spaces-group.sorting .row::before { opacity: 0; }
 .spaces-group.sorting { overflow: visible; }
+
+.meta .rep { color: var(--label-2); }

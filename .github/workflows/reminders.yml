@@ -1,0 +1,43 @@
+name: Erinnerungen
+# Prüft alle 5 Minuten, was fällig ist, und schickt Push-Mitteilungen.
+# Benötigte Secrets (Settings → Secrets and variables → Actions):
+#   TODO_DATA_TOKEN    = derselbe Token wie in der App (Contents: Read and write auf todo-data)
+#   VAPID_PRIVATE_KEY  = privater Schlüssel für Mitteilungen
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: reminders
+  cancel-in-progress: false
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-save --no-audit --no-fund --silent web-push@3
+      - name: Erinnerungen senden
+        run: node scripts/reminders.js
+        env:
+          TODO_TOKEN: ${{ secrets.TODO_DATA_TOKEN }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_PUBLIC_KEY: BBsxI6_8GDNISmMVoG1IxdcDe2WjMB3EGoSNrVijAThBoGmx6-9Vh55Uee2CHKxZeAX6Jl20Cj2I7irHhVmnta0
+          DATA_REPO: FahrniLuca/todo-data
+          MORNING: '07:30'
+          TZ: Europe/Zurich
+      - name: Zeitplan aktiv halten
+        # GitHub pausiert Zeitpläne in Repos ohne Aktivität nach 60 Tagen – alle 45 Tage ein leerer Commit verhindert das.
+        run: |
+          last=$(git log -1 --format=%ct); nowt=$(date +%s)
+          if [ $(( (nowt - last) / 86400 )) -ge 45 ]; then
+            git config user.name "todo-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "keepalive" && git push
+          fi
