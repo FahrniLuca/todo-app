@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.6';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -79,7 +79,9 @@ function dueInfo(t) {
   return { label, cls };
 }
 function sortTasks(a, b) {
-  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+  // Gerade abgehakte Aufgaben (5-s-Countdown) bleiben an ihrem Platz
+  const ad0 = !!a.done && !pendingHide.has(a.id), bd0 = !!b.done && !pendingHide.has(b.id);
+  if (ad0 !== bd0) return ad0 ? 1 : -1;
   const ad = a.due ? a.due + (a.time || '99:99') : '9999', bd = b.due ? b.due + (b.time || '99:99') : '9999';
   if (ad !== bd) return ad < bd ? -1 : 1;
   return (a.createdAt ?? 0) - (b.createdAt ?? 0);
@@ -148,7 +150,7 @@ const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-wid
 function ensureValidView() {
   const sp = spaces();
   if (ui.view === 'inbox' && !alive(db.tasks).some(isOrphan)) ui.view = 'home';
-  if (!['home', 'due', 'inbox', 'space'].includes(ui.view)) ui.view = 'home';
+  if (!['home', 'due', 'inbox', 'space', 'all'].includes(ui.view)) ui.view = 'home';
   if (ui.view === 'space') {
     if (!getSpace(ui.spaceId)) { ui.view = 'home'; ui.spaceId = null; ui.pageId = null; }
     if (ui.pageId && (!getPage(ui.pageId) || getPage(ui.pageId).spaceId !== ui.spaceId)) ui.pageId = null;
@@ -199,6 +201,7 @@ function renderHeader() {
   let title = '';
   if (ui.view === 'home') title = 'Übersicht';
   else if (ui.view === 'due') title = 'Fällig';
+  else if (ui.view === 'all') title = 'Alle offenen';
   else if (ui.view === 'inbox') title = 'Eingang';
   else if (ui.spaceId) {
     const s = getSpace(ui.spaceId), p = ui.pageId && getPage(ui.pageId);
@@ -267,7 +270,7 @@ function homeHTML(tasks) {
     <div class="tiles">
       ${tile('today', 'var(--blue)', dueToday, 'Heute fällig', 'due')}
       ${tile('over', 'var(--red)', overdue, 'Überfällig', 'due')}
-      ${tile('open', '#636366', open.length, 'Offen gesamt', '')}
+      ${tile('open', '#636366', open.length, 'Offen gesamt', 'all')}
       ${tile('done', 'var(--green)', doneToday, 'Heute erledigt', '')}
     </div>`;
   const focus = tasks.filter(t => !isOrphan(t) && t.due && t.due <= td && visible(t)).sort(sortTasks);
@@ -275,7 +278,7 @@ function homeHTML(tasks) {
     html += `<div class="section-h">Heute & überfällig</div>` + group(focus.slice(0, 6), true);
     if (focus.length > 6) html += `<button class="done-toggle" data-view="due">Alle ${focus.length} anzeigen</button>`;
   }
-  html += `<div class="section-h">Bereiche</div><div class="group">`;
+  html += `<div class="section-h">Bereiche</div><div class="group spaces-group">`;
   for (const s of spaces()) {
     const n = openCount(tasks.filter(t => t.spaceId === s.id && !isOrphan(t)));
     const pc = pagesOf(s.id).length;
@@ -284,6 +287,7 @@ function homeHTML(tasks) {
       <span class="row-n">${n || ''}</span>${CHEV}</button>`;
   }
   html += `<button class="row add" data-action="new-space"><span class="row-ic plus">＋</span><span class="row-main"><span class="row-t">Neuer Bereich</span></span></button></div>`;
+  if (spaces().length > 1) html += `<p class="footer-note">Zum Sortieren einen Bereich lange gedrückt halten und ziehen.</p>`;
   html += `<p class="footer-note" style="text-align:center;margin-top:18px;color:var(--label-3)">Version ${APP_VERSION}</p>`;
   if (!spaces().length) html += `<p class="footer-note">Tipp: Tippe unten rechts aufs Mikrofon und diktiere zum Beispiel „Privat: Autoöl wechseln, morgen“.</p>`;
   return html;
@@ -293,6 +297,22 @@ function renderList() {
   const el = $('#list');
   const tasks = alive(db.tasks);
   if (ui.view === 'home') { el.innerHTML = homeHTML(tasks); return; }
+  if (ui.view === 'all') {
+    const shown = tasks.filter(t => ui.showDone || visible(t));
+    let out = '';
+    for (const sp of spaces()) {
+      const lists = [{ p: null }, ...pagesOf(sp.id).map(p => ({ p }))];
+      for (const { p } of lists) {
+        const items = shown.filter(t => t.spaceId === sp.id && (t.pageId || null) === (p ? p.id : null) && !isOrphan(t)).sort(sortTasks);
+        if (!items.length) continue;
+        out += `<div class="section-h">${esc(sp.emoji || '')} ${esc(sp.name)}${p ? ' › ' + (p.emoji ? esc(p.emoji) + ' ' : '') + esc(p.name) : ''}</div>` + group(items);
+      }
+    }
+    const orphans = shown.filter(isOrphan).sort(sortTasks);
+    if (orphans.length) out += `<div class="section-h">Ohne Bereich</div>` + group(orphans);
+    el.innerHTML = out || emptyState('Alles erledigt', 'Es sind keine Aufgaben offen.');
+    return;
+  }
   if (!spaces().length && ui.view !== 'inbox') {
     el.innerHTML = emptyState('Willkommen', 'Lege deinen ersten Bereich an,<br>zum Beispiel „🏠 Privat“.', '<button class="cta" data-action="new-space">Bereich erstellen</button>');
     return;
@@ -346,7 +366,54 @@ function openSheet(html, mount, plain = false) {
   $('#sheetWrap').hidden = false;
   mount && mount(sh);
 }
-function closeSheet() { $('#sheetWrap').hidden = true; $('#sheet').innerHTML = ''; }
+function closeSheet() {
+  const sh = $('#sheet');
+  $('#sheetWrap').hidden = true; sh.innerHTML = '';
+  sh.style.transform = ''; sh.style.transition = '';
+  const bd = $('#sheetWrap .backdrop'); if (bd) { bd.style.opacity = ''; bd.style.transition = ''; }
+}
+/* Nach unten wischen zum Schliessen (wie iOS): am Balken/Titel, oder im Inhalt wenn ganz oben */
+(function sheetSwipe() {
+  const sh = $('#sheet'), bd = $('#sheetWrap .backdrop');
+  let armed = false, dragging = false, startY = 0, dy = 0, t0 = 0;
+  sh.addEventListener('touchstart', e => {
+    armed = false;
+    if (e.touches.length !== 1) return;
+    const tgt = e.target;
+    const handle = tgt.closest('.grabber, .navbar') && !tgt.closest('button');
+    const body = sh.querySelector('.sheet-body');
+    const inBody = body && body.contains(tgt) && body.scrollTop <= 0 && !tgt.closest('input, textarea, select');
+    const plain = sh.classList.contains('plain');
+    if (!handle && !inBody && !plain) return;
+    armed = true; dragging = false; dy = 0; startY = e.touches[0].clientY; t0 = Date.now();
+  }, { passive: true });
+  sh.addEventListener('touchmove', e => {
+    if (!armed) return;
+    const d = e.touches[0].clientY - startY;
+    if (!dragging) {
+      if (d > 8) { dragging = true; sh.style.transition = 'none'; if (bd) bd.style.transition = 'none'; if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
+      else { if (d < -6) armed = false; return; }
+    }
+    dy = Math.max(0, d - 8);
+    sh.style.transform = `translateY(${dy}px)`;
+    if (bd) bd.style.opacity = String(Math.max(0, 1 - dy / (sh.offsetHeight || 600)));
+    e.preventDefault();
+  }, { passive: false });
+  const end = () => {
+    if (!armed) return; armed = false;
+    if (!dragging) return; dragging = false;
+    const v = dy / Math.max(1, Date.now() - t0);
+    if (dy > 110 || (v > 0.5 && dy > 30)) {
+      sh.style.transition = 'transform .22s ease-in'; sh.style.transform = 'translateY(110%)';
+      if (bd) { bd.style.transition = 'opacity .22s'; bd.style.opacity = '0'; }
+      setTimeout(closeSheet, 220);
+    } else {
+      sh.style.transition = 'transform .28s cubic-bezier(.2,.9,.25,1)'; sh.style.transform = '';
+      if (bd) { bd.style.transition = 'opacity .28s'; bd.style.opacity = ''; }
+    }
+  };
+  sh.addEventListener('touchend', end); sh.addEventListener('touchcancel', end);
+})();
 $('#sheetWrap').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeSheet(); });
 function frame(title, body, { left = 'Abbrechen', right = 'Fertig' } = {}) {
   return `<div class="grabber"></div>
@@ -451,7 +518,7 @@ function taskSheet(t) {
   const curSpace = getSpace(t.spaceId) ? t.spaceId : (sp[0]?.id || '');
   const body = `
     <div class="form">
-      <div class="cell"><textarea id="title" rows="1" placeholder="Titel">${esc(t.title)}</textarea></div>
+      <div class="cell"><textarea id="tTitle" rows="1" placeholder="Titel">${esc(t.title)}</textarea></div>
       <div class="cell"><textarea id="notes" rows="2" placeholder="Notizen">${esc(t.notes || '')}</textarea></div>
     </div>
     <div class="section-h">Termin</div>
@@ -487,7 +554,7 @@ function taskSheet(t) {
       markPills();
     });
     s.querySelector('#save').onclick = () => {
-      const title = s.querySelector('#title').value.trim(); if (!title) { s.querySelector('#title').focus(); return; }
+      const title = s.querySelector('#tTitle').value.trim(); if (!title) { s.querySelector('#tTitle').focus(); return; }
       const due = dueEl.value || null;
       Object.assign(t, {
         title, notes: s.querySelector('#notes').value.trim(), due, time: due ? (timeEl.value || null) : null,
@@ -554,6 +621,58 @@ function settingsSheet() {
     };
   });
 }
+
+/* ---------- Bereiche sortieren: lange drücken & ziehen (Übersicht) ---------- */
+(function spaceReorder() {
+  const list = $('#list');
+  let timer = null, row = null, rows = [], idx = 0, target = 0, rowH = 0, startY = 0, startX = 0, dragging = false, suppressClick = false;
+  document.addEventListener('touchstart', () => { if (!dragging) suppressClick = false; }, { passive: true, capture: true });
+  list.addEventListener('touchstart', e => {
+    const r = e.target.closest('.row[data-space]');
+    if (!r || ui.view !== 'home' || e.touches.length !== 1) return;
+    row = r; startY = e.touches[0].clientY; startX = e.touches[0].clientX;
+    timer = setTimeout(begin, 450);
+  }, { passive: true });
+  function begin() {
+    if (!row) return;
+    dragging = true; suppressClick = true;
+    rows = [...row.parentNode.querySelectorAll('.row[data-space]')];
+    idx = target = rows.indexOf(row); rowH = row.offsetHeight;
+    rows.forEach(r => { r.style.transition = 'transform .18s ease'; });
+    row.style.transition = 'box-shadow .15s, background .15s';
+    row.classList.add('lifting');
+    row.parentNode.classList.add('sorting');
+  }
+  list.addEventListener('touchmove', e => {
+    if (!row) return;
+    const y = e.touches[0].clientY, x = e.touches[0].clientX;
+    if (!dragging) { if (Math.abs(y - startY) > 8 || Math.abs(x - startX) > 8) { clearTimeout(timer); row = null; } return; }
+    e.preventDefault();
+    const dy = Math.max(-idx * rowH, Math.min((rows.length - 1 - idx) * rowH, y - startY));
+    row.style.transform = `translateY(${dy}px)`;
+    target = Math.max(0, Math.min(rows.length - 1, Math.round(idx + dy / rowH)));
+    rows.forEach((r, i) => {
+      if (r === row) return;
+      const sh = (i > idx && i <= target) ? -rowH : (i < idx && i >= target) ? rowH : 0;
+      r.style.transform = sh ? `translateY(${sh}px)` : '';
+    });
+  }, { passive: false });
+  function end() {
+    clearTimeout(timer);
+    if (row && dragging) {
+      const sp = spaces();
+      const [item] = sp.splice(idx, 1); sp.splice(target, 0, item);
+      sp.forEach((x, k) => { if (x.order !== k) { x.order = k; touch(x); } });
+      dragging = false; row = null;
+      commit();
+      setTimeout(() => { suppressClick = false; }, 400);
+    }
+    row = null;
+  }
+  list.addEventListener('touchend', end); list.addEventListener('touchcancel', end);
+  document.addEventListener('click', e => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); suppressClick = false; } }, true);
+  list.addEventListener('contextmenu', e => { if (e.target.closest('.row[data-space]')) e.preventDefault(); });
+})();
 
 /* ---------- Events ---------- */
 document.addEventListener('click', e => {

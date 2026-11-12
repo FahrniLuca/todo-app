@@ -216,7 +216,7 @@ svg { display: block; }
 }
 @keyframes up { from { transform: translateY(100%); } }
 @keyframes fade { from { opacity: 0; } }
-.grabber { width: 36px; height: 5px; border-radius: 3px; background: var(--surface-3); margin: 6px auto 0; flex-shrink: 0; }
+.grabber { touch-action: none; width: 36px; height: 5px; border-radius: 3px; background: var(--surface-3); margin: 6px auto 0; flex-shrink: 0; }
 .navbar {
   display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 8px;
   height: 50px; padding: 0 16px; flex-shrink: 0;
@@ -412,3 +412,12 @@ body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bo
 .kb-hint b { color: var(--label); font-weight: 600; }
 .v-kb .cta { align-self: center; height: 48px; padding: 0 32px; border-radius: 24px; background: var(--blue); color: #fff; font-weight: 600; }
 .cell .tick { margin-left: auto; color: var(--blue); font-weight: 600; font-size: 17px; }
+
+.sheet .grabber { margin-top: 6px; box-shadow: 0 0 0 10px transparent; }
+.sheet .navbar { touch-action: pan-x; }
+
+/* Sortieren */
+.row[data-space] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.row.lifting { z-index: 3; background: var(--surface-3) !important; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+.row.lifting::before, .spaces-group.sorting .row::before { opacity: 0; }
+.spaces-group.sorting { overflow: visible; }
