@@ -38,8 +38,10 @@ async function writeFile(path, data, sha, message) {
 }
 
 (async () => {
-  if (!LOCAL_DIR && !TOKEN) throw new Error('Secret TODO_DATA_TOKEN fehlt.');
-  if (!DRY && !LOCAL_DIR && !process.env.VAPID_PRIVATE_KEY) throw new Error('Secret VAPID_PRIVATE_KEY fehlt.');
+  if (!LOCAL_DIR && (!TOKEN || (!DRY && !process.env.VAPID_PRIVATE_KEY))) {
+    console.log('Noch nicht eingerichtet: Secrets TODO_DATA_TOKEN und VAPID_PRIVATE_KEY fehlen – nichts zu tun.');
+    return;
+  }
   if (process.env.VAPID_PRIVATE_KEY) webpush.setVapidDetails('mailto:todo-app@users.noreply.github.com', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
 
   const { data: subsRaw, sha: subsSha } = await readFile('push/subscriptions.json', []);
