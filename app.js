@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '2.0';
+const APP_VERSION = '2.1';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -28,7 +28,6 @@ let ui = Object.assign({ view: 'home', spaceId: null, pageId: null, showDone: fa
 let sync = Object.assign({ lastSync: 0, dirty: false }, LS.get(SYNC_KEY, {}), { status: 'idle', error: '' });
 let changeSeq = 0;
 const pendingHide = new Map();   // taskId -> {timer, start}
-let addDue = { date: '', time: '' };
 
 function normalize(d) {
   d = d && typeof d === 'object' ? d : {};
@@ -111,24 +110,24 @@ function repeatOptions(rep) {
 /* ---------- Mutations ---------- */
 function addSpace(name, emoji) {
   const s = touch({ id: uid('s'), name, emoji, order: spaces().length, createdAt: now() });
-  db.spaces.push(s); ui.view = 'space'; ui.spaceId = s.id; ui.pageId = null; saveUI(); commit();
+  db.spaces.push(s); ui.view = 'space'; ui.spaceId = s.id; saveUI(); commit();
 }
 function addPage(spaceId, name, emoji) {
   const p = touch({ id: uid('p'), spaceId, name, emoji, order: pagesOf(spaceId).length, createdAt: now() });
-  db.pages.push(p); ui.pageId = p.id; saveUI(); commit();
+  db.pages.push(p); addTarget.pageId = p.id; commit();
 }
 function deleteSpace(id) {
   const s = getSpace(id); if (!s) return;
   touch(Object.assign(s, { deleted: true }));
   db.pages.filter(p => p.spaceId === id && !p.deleted).forEach(p => touch(Object.assign(p, { deleted: true })));
   db.tasks.filter(t => t.spaceId === id && !t.deleted).forEach(t => touch(Object.assign(t, { deleted: true })));
-  ui.spaceId = spaces()[0]?.id ?? null; ui.pageId = null; saveUI(); commit();
+  ui.view = 'home'; ui.spaceId = null; saveUI(); commit();
 }
 function deletePage(id) {
   const p = getPage(id); if (!p) return;
   touch(Object.assign(p, { deleted: true }));
   db.tasks.filter(t => t.pageId === id && !t.deleted).forEach(t => touch(Object.assign(t, { deleted: true })));
-  ui.pageId = null; saveUI(); commit();
+  if (addTarget.pageId === id) addTarget.pageId = null; commit();
 }
 function moveItem(list, item, dir) {
   const i = list.indexOf(item), j = i + dir;
@@ -136,14 +135,6 @@ function moveItem(list, item, dir) {
   [list[i], list[j]] = [list[j], list[i]];
   list.forEach((x, k) => { if (x.order !== k) { x.order = k; touch(x); } });
   commit();
-}
-function addTask(title) {
-  const t = touch({
-    id: uid('t'), spaceId: ui.spaceId, pageId: ui.pageId || null, title, notes: '',
-    due: addDue.date || null, time: addDue.date && addDue.time ? addDue.time : null,
-    done: false, doneAt: null, createdAt: now(), createdBy: 'user'
-  });
-  db.tasks.push(t); commit();
 }
 function toggleTask(id) {
   const t = getTask(id); if (!t) return;
@@ -183,36 +174,35 @@ function toggleTask(id) {
 
 /* ---------- Rendering ---------- */
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const VIEWS = ['home', 'today', 'planned', 'all', 'done', 'inbox', 'space'];
+let addTarget = { pageId: null };     // Seite, in die getippte Aufgaben kommen (per ＋ im Abschnitt)
 
 function ensureValidView() {
-  const sp = spaces();
+  if (ui.view === 'due') ui.view = 'today';
   if (ui.view === 'inbox' && !alive(db.tasks).some(isOrphan)) ui.view = 'home';
-  if (!['home', 'due', 'inbox', 'space', 'all'].includes(ui.view)) ui.view = 'home';
-  if (ui.view === 'space') {
-    if (!getSpace(ui.spaceId)) { ui.view = 'home'; ui.spaceId = null; ui.pageId = null; }
-    if (ui.pageId && (!getPage(ui.pageId) || getPage(ui.pageId).spaceId !== ui.spaceId)) ui.pageId = null;
-  }
+  if (!VIEWS.includes(ui.view)) ui.view = 'home';
+  if (ui.view === 'space' && !getSpace(ui.spaceId)) { ui.view = 'home'; ui.spaceId = null; }
+  if (addTarget.pageId && (ui.view !== 'space' || !getPage(addTarget.pageId) || getPage(addTarget.pageId).spaceId !== ui.spaceId)) addTarget.pageId = null;
 }
 const visible = t => !t.deleted && (!t.done || pendingHide.has(t.id));
 const openCount = list => list.filter(t => !t.deleted && !t.done).length;
 
 function render() {
   ensureValidView();
+  closeSwipe(true);
   renderHeader();
   renderList();
   const inSpace = ui.view === 'space' && !!ui.spaceId;
   $('#addbar').hidden = !inSpace;
   $('#fab').hidden = inSpace;
+  updateAddHint();
 }
 
 function renderHeader() {
   const sp = spaces();
   const tasks = alive(db.tasks);
-  const td = today();
-  const dueCount = tasks.filter(t => !t.done && t.due && t.due <= td && !isOrphan(t)).length;
   const orphans = tasks.filter(t => !t.done && isOrphan(t)).length;
   let html = `<button class="chip ${ui.view === 'home' ? 'active' : ''}" data-view="home"><span class="em">${ICON_HOME}</span>Übersicht</button>`;
-  html += `<button class="chip ${ui.view === 'due' ? 'active' : ''}" data-view="due"><span class="em">📅</span>Fällig${dueCount ? ` <span class="n">${dueCount}</span>` : ''}</button>`;
   if (orphans) html += `<button class="chip ${ui.view === 'inbox' ? 'active' : ''}" data-view="inbox"><span class="em">📥</span>Eingang <span class="n">${orphans}</span></button>`;
   for (const s of sp) {
     const n = openCount(tasks.filter(t => t.spaceId === s.id && !isOrphan(t)));
@@ -220,48 +210,34 @@ function renderHeader() {
   }
   html += `<button class="chip add" data-action="new-space">＋ Bereich</button>`;
   $('#spaces').innerHTML = html;
+  $('#pages').innerHTML = '';
 
-  let sub = '';
-  if (ui.view === 'space' && ui.spaceId) {
-    const s = getSpace(ui.spaceId);
-    const general = openCount(tasks.filter(t => t.spaceId === s.id && !t.pageId));
-    sub += `<button class="chip ${!ui.pageId ? 'active' : ''}" data-page="">Allgemein${general ? ` <span class="n">${general}</span>` : ''}</button>`;
-    for (const p of pagesOf(s.id)) {
-      const n = openCount(tasks.filter(t => t.pageId === p.id));
-      sub += `<button class="chip ${ui.pageId === p.id ? 'active' : ''}" data-page="${esc(p.id)}">${p.emoji ? `<span class="em">${esc(p.emoji)}</span>` : ''}${esc(p.name)}${n ? ` <span class="n">${n}</span>` : ''}</button>`;
-    }
-    sub += `<button class="chip add" data-action="new-page">＋ Seite</button>`;
-  }
-  $('#pages').innerHTML = sub;
-
-  // Titel (Large Title)
-  let title = '';
-  if (ui.view === 'home') title = 'Übersicht';
-  else if (ui.view === 'due') title = 'Fällig';
-  else if (ui.view === 'all') title = 'Alle offenen';
-  else if (ui.view === 'inbox') title = 'Eingang';
-  else if (ui.spaceId) {
-    const s = getSpace(ui.spaceId), p = ui.pageId && getPage(ui.pageId);
-    title = p ? `${p.emoji ? esc(p.emoji) + ' ' : ''}${esc(p.name)}` : `${esc(s.emoji || '')} ${esc(s.name)}`.trim();
-  } else title = 'Erinnerungen';
+  const TITLES = { home: 'Übersicht', today: 'Heute', planned: 'Geplant', all: 'Alle', done: 'Erledigt', inbox: 'Eingang' };
+  let title = TITLES[ui.view] || 'Erinnerungen';
+  if (ui.view === 'space') { const s = getSpace(ui.spaceId); title = `${esc(s.emoji || '')} ${esc(s.name)}`.trim(); }
   $('#title').innerHTML = title;
   document.title = $('#title').textContent || 'To-Do';
 
-  // Sync-Badge
+  // Sync-Anzeige nur, wenn etwas nicht stimmt
   const b = $('#syncBtn');
   let cls = '', txt = '';
-  if (!configured()) { cls = 'warn'; txt = 'Nur lokal'; }
-  else if (sync.status === 'syncing') { cls = 'busy'; txt = 'Sync …'; }
+  if (!configured()) { cls = 'warn'; txt = 'Nicht verbunden'; }
   else if (sync.status === 'error') { cls = 'err'; txt = 'Sync-Fehler'; }
   else if (!navigator.onLine || sync.status === 'offline') { cls = 'warn'; txt = 'Offline'; }
-  else if (sync.dirty) { cls = 'busy'; txt = 'Ausstehend'; }
-  else { cls = 'ok'; txt = 'Synchron'; }
+  b.hidden = !txt;
   b.className = 'sync ' + cls;
   b.innerHTML = `<span class="dot"></span>${txt}`;
 }
 
 const ICON_CAL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
 const ICON_NOTE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 6h14M5 12h14M5 18h9"/></svg>';
+const SW_ICONS = {
+  done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>',
+  date: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+  move: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2.5h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M10 14h6M13.5 11.5L16 14l-2.5 2.5"/></svg>',
+  del: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M10 11v6M14 11v6M6.5 7l1 12a2 2 0 0 0 2 1.8h5a2 2 0 0 0 2-1.8l1-12M9.5 7V4.5h5V7"/></svg>'
+};
 function taskHTML(t, ctx) {
   const di = dueInfo(t);
   const meta = [];
@@ -271,13 +247,22 @@ function taskHTML(t, ctx) {
   if (t.notes) meta.push(`<span>${ICON_NOTE}</span>`);
   if (t.createdBy === 'claude') meta.push('<span class="by-claude">✦ Claude</span>');
   const p = pendingHide.get(t.id);
-  const cd = p && !ui.showDone ? `<div class="countdown" style="animation-delay:-${now() - p.start}ms"></div>` : '';
-  return `<div class="task ${t.done ? 'done' : ''}" data-id="${esc(t.id)}">
-    <button class="check" data-check="${esc(t.id)}" aria-label="${t.done ? 'Als offen markieren' : 'Erledigt'}">${CHECK_SVG}</button>
-    <button class="task-body" data-edit="${esc(t.id)}">
-      <div class="task-title">${esc(t.title)}</div>
-      ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
-    </button>${cd}</div>`;
+  const cd = p && !ui.showDone && ui.view !== 'done' ? `<div class="countdown" style="animation-delay:-${now() - p.start}ms"></div>` : '';
+  const id = esc(t.id);
+  return `<div class="task ${t.done ? 'done' : ''}" data-id="${id}">
+    <div class="sw-left">${t.done ? SW_ICONS.undo : SW_ICONS.done}<span>${t.done ? 'Offen' : 'Erledigt'}</span></div>
+    <div class="sw-right">
+      <button data-act="date" class="sw-date">${SW_ICONS.date}<span>Datum</span></button>
+      <button data-act="move" class="sw-move">${SW_ICONS.move}<span>Verschieben</span></button>
+      <button data-act="del" class="sw-del">${SW_ICONS.del}<span>Löschen</span></button>
+    </div>
+    <div class="task-fg">
+      <button class="check" data-check="${id}" aria-label="${t.done ? 'Als offen markieren' : 'Erledigt'}">${CHECK_SVG}</button>
+      <button class="task-body" data-edit="${id}">
+        <div class="task-title">${esc(t.title)}</div>
+        ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
+      </button>${cd}
+    </div></div>`;
 }
 function ctxLabel(t) {
   const s = getSpace(t.spaceId), p = t.pageId && getPage(t.pageId);
@@ -290,31 +275,33 @@ const emptyState = (title, text, cta) => `<div class="empty">${EMPTY_ICON}<div c
 const ICON_HOME = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>';
 const TILE_ICONS = {
   today: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="5.5" width="16" height="14.5" rx="3"/><path d="M4 10h16M8.5 3.5v3M15.5 3.5v3"/></svg>',
-  over: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M12 6.5v7"/><circle cx="12" cy="17.6" r=".6" fill="#fff"/></svg>',
-  open: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M8.5 7h11M8.5 12h11M8.5 17h11"/><circle cx="4.6" cy="7" r=".9" fill="#fff"/><circle cx="4.6" cy="12" r=".9" fill="#fff"/><circle cx="4.6" cy="17" r=".9" fill="#fff"/></svg>',
+  planned: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><rect x="4" y="5.5" width="16" height="14.5" rx="3"/><path d="M4 10h16M8.5 3.5v3M15.5 3.5v3"/><circle cx="9" cy="14.5" r=".8" fill="#fff"/><circle cx="12" cy="14.5" r=".8" fill="#fff"/><circle cx="15" cy="14.5" r=".8" fill="#fff"/></svg>',
+  all: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M8.5 7h11M8.5 12h11M8.5 17h11"/><circle cx="4.6" cy="7" r=".9" fill="#fff"/><circle cx="4.6" cy="12" r=".9" fill="#fff"/><circle cx="4.6" cy="17" r=".9" fill="#fff"/></svg>',
   done: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 12.5l4 4L18.5 8"/></svg>'
 };
 function homeHTML(tasks) {
   const td = today();
   const live = tasks.filter(t => !isOrphan(t));
   const open = live.filter(t => !t.done);
-  const dueToday = open.filter(t => t.due === td).length;
-  const overdue = open.filter(t => t.due && t.due < td).length;
-  const doneToday = live.filter(t => t.done && t.doneAt && isoDay(new Date(t.doneAt)) === td).length;
-  const tile = (key, color, n, label, view) => `<button class="tile" ${view ? `data-view="${view}"` : 'data-tile=""'}>
-      <span class="tile-ic" style="background:${color}">${TILE_ICONS[key]}</span><span class="tile-n">${n}</span><span class="tile-l">${label}</span></button>`;
+  const todayN = open.filter(t => t.due && t.due <= td).length;
+  const overdueN = open.filter(t => t.due && t.due < td).length;
+  const plannedN = open.filter(t => t.due).length;
+  const doneN = live.filter(t => t.done).length;
+  const tile = (key, color, n, label, view, sub) => `<button class="tile" data-view="${view}">
+      <span class="tile-ic" style="background:${color}">${TILE_ICONS[key]}</span><span class="tile-n">${n}</span>
+      <span class="tile-l">${label}${sub ? `<span class="tile-sub">${sub}</span>` : ''}</span></button>`;
   const dateLine = new Date().toLocaleDateString('de-CH', { weekday: 'long', day: 'numeric', month: 'long' });
   let html = `<div class="date-line">${esc(dateLine)}</div>
     <div class="tiles">
-      ${tile('today', 'var(--blue)', dueToday, 'Heute fällig', 'due')}
-      ${tile('over', 'var(--red)', overdue, 'Überfällig', 'due')}
-      ${tile('open', '#636366', open.length, 'Offen gesamt', 'all')}
-      ${tile('done', 'var(--green)', doneToday, 'Heute erledigt', '')}
+      ${tile('today', 'var(--blue)', todayN, 'Heute', 'today', overdueN ? `${overdueN} überfällig` : '')}
+      ${tile('planned', 'var(--red)', plannedN, 'Geplant', 'planned')}
+      ${tile('all', '#636366', open.length, 'Alle', 'all')}
+      ${tile('done', 'var(--green)', doneN, 'Erledigt', 'done')}
     </div>`;
   const focus = tasks.filter(t => !isOrphan(t) && t.due && t.due <= td && visible(t)).sort(sortTasks);
   if (focus.length) {
-    html += `<div class="section-h">Heute & überfällig</div>` + group(focus.slice(0, 6), true);
-    if (focus.length > 6) html += `<button class="done-toggle" data-view="due">Alle ${focus.length} anzeigen</button>`;
+    html += `<div class="section-h">Heute</div>` + group(focus.slice(0, 6), true);
+    if (focus.length > 6) html += `<button class="done-toggle" data-view="today">Alle ${focus.length} anzeigen</button>`;
   }
   html += `<div class="section-h">Bereiche</div><div class="group spaces-group">`;
   for (const s of spaces()) {
@@ -326,15 +313,47 @@ function homeHTML(tasks) {
   }
   html += `<button class="row add" data-action="new-space"><span class="row-ic plus">＋</span><span class="row-main"><span class="row-t">Neuer Bereich</span></span></button></div>`;
   if (spaces().length > 1) html += `<p class="footer-note">Zum Sortieren einen Bereich lange gedrückt halten und ziehen.</p>`;
-  html += `<p class="footer-note" style="text-align:center;margin-top:18px;color:var(--label-3)">Version ${APP_VERSION}</p>`;
   if (!spaces().length) html += `<p class="footer-note">Tipp: Tippe unten rechts aufs Mikrofon und diktiere zum Beispiel „Privat: Autoöl wechseln, morgen“.</p>`;
+  html += `<p class="footer-note" style="text-align:center;margin-top:18px;color:var(--label-3)">Version ${APP_VERSION}</p>`;
   return html;
 }
+
+function dayHeader(iso) {
+  const td = today();
+  if (iso === td) return 'Heute';
+  if (iso === addDays(1)) return 'Morgen';
+  if (iso === addDays(-1)) return 'Gestern';
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('de-CH', { weekday: 'long', day: 'numeric', month: 'long', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+}
+const PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+const DOTS_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
 
 function renderList() {
   const el = $('#list');
   const tasks = alive(db.tasks);
+  const td = today();
   if (ui.view === 'home') { el.innerHTML = homeHTML(tasks); return; }
+
+  if (ui.view === 'today') {
+    const list = tasks.filter(t => t.due && t.due <= td && !isOrphan(t) && (ui.showDone || visible(t)));
+    const over = list.filter(t => t.due < td).sort(sortTasks), tod = list.filter(t => t.due === td).sort(sortTasks);
+    let html = '';
+    if (over.length) html += `<div class="section-h red">Überfällig</div>` + group(over, true);
+    if (tod.length) html += `<div class="section-h">Heute</div>` + group(tod, true);
+    el.innerHTML = html || emptyState('Nichts fällig', 'Geniess den Tag.');
+    return;
+  }
+  if (ui.view === 'planned') {
+    const list = tasks.filter(t => t.due && !isOrphan(t) && visible(t)).sort(sortTasks);
+    let html = '';
+    const over = list.filter(t => t.due < td);
+    if (over.length) html += `<div class="section-h red">Überfällig</div>` + group(over, true);
+    const days = [...new Set(list.filter(t => t.due >= td).map(t => t.due))].sort();
+    for (const d of days) html += `<div class="section-h">${esc(dayHeader(d))}</div>` + group(list.filter(t => t.due === d), true);
+    el.innerHTML = html || emptyState('Nichts geplant', 'Aufgaben mit Datum erscheinen hier.');
+    return;
+  }
   if (ui.view === 'all') {
     const shown = tasks.filter(t => ui.showDone || visible(t));
     let out = '';
@@ -351,30 +370,51 @@ function renderList() {
     el.innerHTML = out || emptyState('Alles erledigt', 'Es sind keine Aufgaben offen.');
     return;
   }
+  if (ui.view === 'done') {
+    const list = tasks.filter(t => (t.done || pendingHide.has(t.id)) && !isOrphan(t)).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 150);
+    let html = '', cur = null, buf = [];
+    const flush = () => { if (buf.length) html += `<div class="section-h">${esc(dayHeader(cur))}</div>` + group(buf, true); buf = []; };
+    for (const t of list) { const d = t.doneAt ? isoDay(new Date(t.doneAt)) : '0000-00-00'; if (d !== cur) { flush(); cur = d; } buf.push(t); }
+    flush();
+    el.innerHTML = html ? `<p class="footer-note" style="margin:6px 4px 0">Kreis antippen oder nach rechts wischen, um eine Aufgabe wieder zu öffnen.</p>` + html : emptyState('Noch nichts erledigt', 'Abgehakte Aufgaben erscheinen hier.');
+    return;
+  }
   if (!spaces().length && ui.view !== 'inbox') {
     el.innerHTML = emptyState('Willkommen', 'Lege deinen ersten Bereich an,<br>zum Beispiel „🏠 Privat“.', '<button class="cta" data-action="new-space">Bereich erstellen</button>');
     return;
   }
-  let list, html = '';
-  if (ui.view === 'due') {
-    const td = today();
-    list = tasks.filter(t => t.due && t.due <= td && !isOrphan(t) && (ui.showDone ? true : visible(t)));
-    const over = list.filter(t => t.due < td).sort(sortTasks), tod = list.filter(t => t.due === td).sort(sortTasks);
-    const upcoming = tasks.filter(t => !t.done && t.due && t.due > td && t.due <= addDays(7) && !isOrphan(t)).sort(sortTasks);
-    if (over.length) html += `<div class="section-h red">Überfällig</div>` + group(over, true);
-    if (tod.length) html += `<div class="section-h">Heute</div>` + group(tod, true);
-    if (upcoming.length) html += `<div class="section-h">Nächste 7 Tage</div>` + group(upcoming, true);
-    if (!html) html = emptyState('Nichts fällig', 'Geniess den Tag.');
-    el.innerHTML = html; return;
-  }
   if (ui.view === 'inbox') {
-    list = tasks.filter(t => isOrphan(t) && (ui.showDone || visible(t))).sort(sortTasks);
-    el.innerHTML = `<div class="section-h">Ohne Bereich – antippen zum Verschieben</div>` + group(list) + doneToggle(tasks.filter(isOrphan));
+    const list = tasks.filter(t => isOrphan(t) && (ui.showDone || visible(t))).sort(sortTasks);
+    el.innerHTML = `<div class="section-h">Ohne Bereich – nach links wischen zum Verschieben</div>` + group(list) + doneToggle(tasks.filter(isOrphan));
     return;
   }
-  const scope = tasks.filter(t => t.spaceId === ui.spaceId && (t.pageId || null) === (ui.pageId || null));
-  list = scope.filter(t => ui.showDone || visible(t)).sort(sortTasks);
-  html = list.length ? '<div style="height:8px"></div>' + group(list) : emptyState('Alles erledigt', 'Neue Erinnerungen fügst du unten hinzu.');
+  // Bereich: alle Seiten als Abschnitte
+  const sid = ui.spaceId;
+  const scope = tasks.filter(t => t.spaceId === sid && !isOrphan(t));
+  const pages = pagesOf(sid);
+  const shown = scope.filter(t => ui.showDone || visible(t));
+  const sectionHead = (p) => {
+    const items = scope.filter(t => (t.pageId || null) === (p ? p.id : null));
+    const n = openCount(items);
+    const target = !!p && addTarget.pageId === p.id;
+    return `<div class="page-h ${target && pages.length ? 'target' : ''}">
+      <span class="page-t">${p ? (p.emoji ? `<span class="page-em">${esc(p.emoji)}</span>` : '') + esc(p.name) : 'Allgemein'}${n ? ` <span class="page-n">${n}</span>` : ''}</span>
+      <button class="page-btn" data-addto="${p ? esc(p.id) : ''}" aria-label="Aufgabe hinzufügen">${PLUS_SVG}</button>
+      ${p ? `<button class="page-btn" data-pagemenu="${esc(p.id)}" aria-label="Seite bearbeiten">${DOTS_SVG}</button>` : ''}
+    </div>`;
+  };
+  let html = '';
+  if (!pages.length) {
+    const list = shown.sort(sortTasks);
+    html = list.length ? '<div style="height:8px"></div>' + group(list) : emptyState('Alles erledigt', 'Neue Erinnerungen fügst du unten hinzu.');
+  } else {
+    for (const p of [null, ...pages]) {
+      const list = shown.filter(t => (t.pageId || null) === (p ? p.id : null)).sort(sortTasks);
+      if (!p && !list.length) continue;      // leeres „Allgemein“ nicht anzeigen
+      html += sectionHead(p) + (list.length ? group(list) : `<div class="group empty-sec"><button class="empty-row" data-addto="${p ? esc(p.id) : ''}">Keine Aufgaben – tippen zum Hinzufügen</button></div>`);
+    }
+  }
+  html += `<button class="new-page-btn" data-action="new-page">${PLUS_SVG}Neue Seite</button>`;
   el.innerHTML = html + doneToggle(scope);
 }
 function doneToggle(scope) {
@@ -461,7 +501,7 @@ function frame(title, body, { left = 'Abbrechen', right = 'Fertig' } = {}) {
 // iOS Action Sheet
 function actionSheet({ title, message, actions }) {
   const msg = title || message ? `<div class="msg">${title ? `<b>${esc(title)}</b>` : ''}${message ? esc(message) : ''}</div>` : '';
-  openSheet(`<div class="action-group">${msg}${actions.map((a, i) => `<button data-i="${i}" class="${a.danger ? 'danger' : ''}">${esc(a.label)}</button>`).join('')}</div>
+  openSheet(`<div class="action-group">${msg}${actions.map((a, i) => `<button data-i="${i}" class="${a.danger ? 'danger' : ''}${a.indent ? ' indent' : ''}">${esc(a.label)}</button>`).join('')}</div>
     <div class="action-group"><button class="bold" data-close>Abbrechen</button></div>`,
     s => s.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { closeSheet(); actions[+b.dataset.i].run(); }), true);
 }
@@ -537,20 +577,86 @@ function pageSheet(page) {
     });
 }
 function titleMenu() {
-  if (ui.view !== 'space' || !ui.spaceId) { settingsSheet(); return; }
-  const s = getSpace(ui.spaceId), p = ui.pageId && getPage(ui.pageId);
   const actions = [];
-  if (p) actions.push({ label: `Seite „${p.name}“ bearbeiten`, run: () => pageSheet(p) });
-  actions.push({ label: 'Neue Seite', run: () => pageSheet(null) });
-  actions.push({ label: `Bereich „${s.name}“ bearbeiten`, run: () => spaceSheet(s) });
-  actions.push({ label: ui.showDone ? 'Erledigte ausblenden' : 'Erledigte anzeigen', run: () => { ui.showDone = !ui.showDone; saveUI(); render(); } });
-  actions.push({ label: 'Sync & Einstellungen', run: settingsSheet });
+  if (ui.view === 'space' && ui.spaceId) {
+    const s = getSpace(ui.spaceId);
+    actions.push({ label: 'Neue Seite', run: () => pageSheet(null) });
+    actions.push({ label: `Bereich „${s.name}“ bearbeiten`, run: () => spaceSheet(s) });
+  }
+  if (['space', 'all', 'today', 'inbox'].includes(ui.view)) {
+    actions.push({ label: ui.showDone ? 'Erledigte ausblenden' : 'Erledigte anzeigen', run: () => { ui.showDone = !ui.showDone; saveUI(); render(); } });
+  }
+  actions.push({ label: 'Einstellungen', run: settingsSheet });
   actionSheet({ actions });
+}
+function pageMenu(p) {
+  actionSheet({ title: `${p.emoji ? p.emoji + ' ' : ''}${p.name}`, actions: [
+    { label: 'Aufgabe hinzufügen', run: () => focusAdd(p.id) },
+    { label: 'Seite bearbeiten', run: () => pageSheet(p) },
+    { label: 'Seite löschen', danger: true, run: () => confirmSheet(`Die Seite „${p.name}“ wird mit ihren Aufgaben gelöscht.`, 'Seite löschen', () => deletePage(p.id)) }
+  ] });
+}
+
+/* ---------- Schnelle Aktionen (Wischen / langes Drücken) ---------- */
+const nextWeekend = () => { const d = new Date().getDay(); return addDays(d === 6 ? 7 : (6 - d)); };
+function setDue(t, due, label) {
+  const prev = { due: t.due, time: t.time };
+  t.due = due; if (!due) { t.time = null; t.repeat = null; }
+  touch(t); commit();
+  showToast(label || (due ? dueInfo(t).label : 'Kein Datum'), 'Widerrufen', () => { Object.assign(t, prev); touch(t); commit(); }, 4000);
+}
+function dateMenu(t) {
+  actionSheet({ title: t.title, actions: [
+    { label: 'Heute', run: () => setDue(t, today()) },
+    { label: 'Morgen', run: () => setDue(t, addDays(1)) },
+    { label: 'Am Wochenende', run: () => setDue(t, nextWeekend()) },
+    { label: 'Nächste Woche', run: () => setDue(t, addDays(7)) },
+    ...(t.due ? [{ label: 'Kein Datum', run: () => setDue(t, null, 'Datum entfernt') }] : []),
+    { label: 'Datum & Uhrzeit wählen …', run: () => taskSheet(t) }
+  ] });
+}
+function moveMenu(t) {
+  const actions = [];
+  for (const s of spaces()) {
+    const here = (pid) => t.spaceId === s.id && (t.pageId || null) === pid;
+    actions.push({ label: `${s.emoji || ''} ${s.name}${here(null) ? '  ✓' : ''}`.trim(), run: () => moveTask(t, s.id, null) });
+    for (const p of pagesOf(s.id)) actions.push({ label: `↳ ${p.emoji ? p.emoji + ' ' : ''}${p.name}${here(p.id) ? '  ✓' : ''}`, run: () => moveTask(t, s.id, p.id), indent: true });
+  }
+  actionSheet({ title: 'Verschieben nach …', actions });
+}
+function moveTask(t, spaceId, pageId) {
+  const prev = { spaceId: t.spaceId, pageId: t.pageId };
+  Object.assign(t, { spaceId, pageId }); touch(t); commit();
+  showToast(`→ ${ctxLabel(t)}`, 'Widerrufen', () => { Object.assign(t, prev); touch(t); commit(); }, 4000);
+}
+function deleteTask(t) {
+  touch(Object.assign(t, { deleted: true })); commit();
+  showToast('Aufgabe gelöscht', 'Widerrufen', () => { touch(Object.assign(t, { deleted: false })); commit(); }, 5000);
+}
+function taskAction(act, id) {
+  const t = getTask(id); if (!t) return;
+  if (act === 'date') dateMenu(t);
+  else if (act === 'move') moveMenu(t);
+  else if (act === 'del') deleteTask(t);
+}
+function contextMenu(id) {
+  const t = getTask(id); if (!t) return;
+  actionSheet({ title: t.title, actions: [
+    { label: 'Bearbeiten', run: () => taskSheet(t) },
+    { label: t.done ? 'Wieder öffnen' : 'Erledigt', run: () => toggleTask(t.id) },
+    { label: 'Heute', run: () => setDue(t, today()) },
+    { label: 'Morgen', run: () => setDue(t, addDays(1)) },
+    { label: 'Datum …', run: () => dateMenu(t) },
+    { label: 'Verschieben …', run: () => moveMenu(t) },
+    { label: 'Löschen', danger: true, run: () => deleteTask(t) }
+  ] });
 }
 
 function pageOptions(spaceId, selected) {
   return `<option value="">Allgemein</option>` + pagesOf(spaceId).map(p => `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc((p.emoji ? p.emoji + ' ' : '') + p.name)}</option>`).join('');
 }
+const SWITCH = (id, on) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span></span></label>`;
+const nextFullHour = () => { const h = (new Date().getHours() + 1) % 24; return `${pad(h)}:00`; };
 function taskSheet(t) {
   const sp = spaces();
   const curSpace = getSpace(t.spaceId) ? t.spaceId : (sp[0]?.id || '');
@@ -561,50 +667,64 @@ function taskSheet(t) {
     </div>
     <div class="section-h">Termin</div>
     <div class="form">
-      <div class="cell"><div class="pills in-cell">
-        <button type="button" data-q="today">Heute</button><button type="button" data-q="tomorrow">Morgen</button>
-        <button type="button" data-q="week">Nächste Woche</button><button type="button" data-q="none">Keins</button></div></div>
-      <div class="cell"><span class="lbl">Datum</span><input type="date" id="due" value="${esc(t.due || '')}"></div>
-      <div class="cell"><span class="lbl">Uhrzeit</span><input type="time" id="time" value="${esc(t.time || '')}"></div>
-      <label class="cell"><span class="lbl">Wiederholen</span><select id="repeat">${repeatOptions(t.repeat)}</select>${CHEV}</label>
+      <div class="cell sw-cell"><span class="cell-ic" style="background:var(--red)">${TILE_ICONS.today}</span><span class="lbl2"><span>Datum</span><span class="sub" id="dueSub"></span></span>${SWITCH('dueOn', !!t.due)}</div>
+      <div class="cell detail" id="dueRow">
+        <div class="qgrid">
+          <button type="button" data-q="today">Heute</button><button type="button" data-q="tomorrow">Morgen</button>
+          <button type="button" data-q="weekend">Wochenende</button><button type="button" data-q="week">Nächste Woche</button>
+        </div>
+        <div class="row-input"><span>Anderes Datum</span><input type="date" id="due" value="${esc(t.due || '')}"></div>
+      </div>
+      <div class="cell sw-cell"><span class="cell-ic" style="background:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></svg></span><span class="lbl2"><span>Uhrzeit</span><span class="sub" id="timeSub"></span></span>${SWITCH('timeOn', !!t.time)}</div>
+      <div class="cell detail" id="timeRow"><div class="row-input"><span>Erinnern um</span><input type="time" id="time" value="${esc(t.time || '')}"></div></div>
+      <label class="cell" id="repRow"><span class="cell-ic" style="background:#636366"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3.5l3 3-3 3"/><path d="M4 11.5V10a3.5 3.5 0 0 1 3.5-3.5H20"/><path d="M7 20.5l-3-3 3-3"/><path d="M20 12.5V14a3.5 3.5 0 0 1-3.5 3.5H4"/></svg></span><span class="lbl">Wiederholen</span><select id="repeat">${repeatOptions(t.repeat)}</select>${CHEV}</label>
     </div>
     <div class="section-h">Liste</div>
     <div class="form">
       <label class="cell"><span class="lbl">Bereich</span><select id="space">${sp.map(s => `<option value="${esc(s.id)}" ${s.id === curSpace ? 'selected' : ''}>${esc((s.emoji || '') + ' ' + s.name)}</option>`).join('')}</select>${CHEV}</label>
       <label class="cell"><span class="lbl">Seite</span><select id="page">${pageOptions(curSpace, t.pageId)}</select>${CHEV}</label>
     </div>
-    ${t.createdBy === 'claude' ? '<p class="footer-note">✦ Von Claude hinzugefügt</p>' : ''}
+    ${t.createdBy === 'claude' ? '<p class="footer-note">✦ Von Claude hinzugefügt</p>' : t.createdBy === 'siri' ? '<p class="footer-note">Per Siri hinzugefügt</p>' : ''}
     <div class="form" style="margin-top:28px"><div class="cell button-cell action danger" id="del">Aufgabe löschen</div></div>`;
   openSheet(frame('Details', body), s => {
     const autosize = ta => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
     s.querySelectorAll('textarea').forEach(ta => { autosize(ta); ta.oninput = () => autosize(ta); });
+    const dueOn = s.querySelector('#dueOn'), timeOn = s.querySelector('#timeOn');
     const dueEl = s.querySelector('#due'), timeEl = s.querySelector('#time');
-    const markPills = () => s.querySelectorAll('[data-q]').forEach(b => {
-      const q = b.dataset.q; const v = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
-      b.classList.toggle('on', dueEl.value === v);
-    });
-    markPills(); dueEl.onchange = markPills;
-    timeEl.onchange = () => { if (timeEl.value && !dueEl.value) { dueEl.value = today(); markPills(); } };
+    const qv = q => q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'weekend' ? nextWeekend() : addDays(7);
+    const refresh = () => {
+      s.querySelector('#dueRow').hidden = !dueOn.checked;
+      s.querySelector('#timeRow').hidden = !timeOn.checked;
+      s.querySelector('#repRow').hidden = !dueOn.checked;
+      s.querySelector('#dueSub').textContent = dueOn.checked && dueEl.value ? dueInfo({ due: dueEl.value }).label : '';
+      s.querySelector('#timeSub').textContent = timeOn.checked && timeEl.value ? timeEl.value : '';
+      s.querySelectorAll('[data-q]').forEach(b => b.classList.toggle('on', dueEl.value === qv(b.dataset.q)));
+    };
+    dueOn.onchange = () => {
+      if (dueOn.checked && !dueEl.value) dueEl.value = today();
+      if (!dueOn.checked) { timeOn.checked = false; s.querySelector('#repeat').value = ''; }
+      refresh();
+    };
+    timeOn.onchange = () => {
+      if (timeOn.checked) { if (!dueOn.checked) { dueOn.checked = true; if (!dueEl.value) dueEl.value = today(); } if (!timeEl.value) timeEl.value = nextFullHour(); }
+      refresh();
+    };
+    dueEl.onchange = refresh; timeEl.onchange = refresh;
+    s.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { dueEl.value = qv(b.dataset.q); refresh(); });
+    refresh();
     s.querySelector('#space').onchange = e => s.querySelector('#page').innerHTML = pageOptions(e.target.value, null);
-    s.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
-      const q = b.dataset.q;
-      dueEl.value = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
-      if (q === 'none') timeEl.value = '';
-      markPills();
-    });
     s.querySelector('#save').onclick = () => {
       const title = s.querySelector('#tTitle').value.trim(); if (!title) { s.querySelector('#tTitle').focus(); return; }
-      const due = dueEl.value || null;
+      const due = dueOn.checked ? (dueEl.value || today()) : null;
       const rv = s.querySelector('#repeat').value;
-      const repeat = rv === 'custom' ? t.repeat : repeatFromValue(rv);
-      const due2 = due || (repeat ? today() : null);
+      const repeat = due ? (rv === 'custom' ? t.repeat : repeatFromValue(rv)) : null;
       Object.assign(t, {
-        title, notes: s.querySelector('#notes').value.trim(), due: due2, time: due2 ? (timeEl.value || null) : null, repeat,
+        title, notes: s.querySelector('#notes').value.trim(), due, time: due && timeOn.checked ? (timeEl.value || null) : null, repeat,
         spaceId: s.querySelector('#space').value || t.spaceId, pageId: s.querySelector('#page').value || null
       });
       touch(t); closeSheet(); commit();
     };
-    s.querySelector('#del').onclick = () => { touch(Object.assign(t, { deleted: true })); closeSheet(); commit(); showToast('Aufgabe gelöscht', 'Widerrufen', () => { touch(Object.assign(t, { deleted: false })); commit(); }, 5000); };
+    s.querySelector('#del').onclick = () => { closeSheet(); deleteTask(t); };
   });
 }
 
@@ -743,50 +863,144 @@ function settingsSheet() {
   list.addEventListener('contextmenu', e => { if (e.target.closest('.row[data-space]')) e.preventDefault(); });
 })();
 
+/* ---------- Wischgesten & langes Drücken auf Aufgaben ----------
+   → nach rechts: erledigt / wieder offen   ← nach links: Datum · Verschieben · Löschen
+   langes Drücken: Kontextmenü */
+let openSwipe = null;
+function closeSwipe(instant) {
+  if (!openSwipe) return;
+  const fg = openSwipe.querySelector('.task-fg');
+  if (fg) { fg.style.transition = instant ? 'none' : 'transform .25s cubic-bezier(.2,.9,.25,1)'; fg.style.transform = ''; }
+  openSwipe.classList.remove('open', 'sw-r');
+  openSwipe = null;
+}
+(function taskGestures() {
+  const list = $('#list');
+  const ACT_W = 222, DONE_AT = 90;
+  let row = null, fg = null, sx = 0, sy = 0, dx = 0, base = 0, mode = null, lp = null, swallow = false;
+  document.addEventListener('touchstart', () => { if (!row) swallow = false; }, { passive: true, capture: true });
+  list.addEventListener('touchstart', e => {
+    const r = e.target.closest('.task');
+    if (!r || e.touches.length !== 1 || e.target.closest('.sw-right button')) return;
+    row = r; fg = r.querySelector('.task-fg'); sx = e.touches[0].clientX; sy = e.touches[0].clientY; dx = 0; mode = null;
+    base = r.classList.contains('open') ? -ACT_W : 0;
+    clearTimeout(lp);
+    if (!openSwipe) lp = setTimeout(() => { if (!mode && row === r) { mode = 'lp'; swallow = true; r.classList.add('pressed'); setTimeout(() => r.classList.remove('pressed'), 250); contextMenu(r.dataset.id); } }, 480);
+  }, { passive: true });
+  list.addEventListener('touchmove', e => {
+    if (!row) return;
+    const ddx = e.touches[0].clientX - sx, ddy = e.touches[0].clientY - sy;
+    if (!mode) {
+      if (Math.abs(ddx) > 10 && Math.abs(ddx) > Math.abs(ddy) * 1.3) { mode = 'h'; clearTimeout(lp); fg.style.transition = 'none'; if (openSwipe && openSwipe !== row) closeSwipe(); }
+      else if (Math.abs(ddy) > 8) { mode = 'v'; clearTimeout(lp); return; }
+      else return;
+    }
+    if (mode !== 'h') return;
+    e.preventDefault();
+    dx = base + ddx;
+    if (dx > 0) dx = Math.min(dx, row.offsetWidth * 0.75);
+    else if (dx < -ACT_W) dx = -ACT_W + (dx + ACT_W) * 0.3;     // Gummiband
+    fg.style.transform = `translateX(${dx}px)`;
+    row.classList.toggle('sw-l', dx > 0);
+    row.classList.toggle('sw-r', dx < 0);
+    row.classList.toggle('armed', dx > DONE_AT);
+  }, { passive: false });
+  const end = () => {
+    clearTimeout(lp);
+    if (!row) return;
+    const r = row, f = fg; row = null;
+    if (mode === 'h') {
+      swallow = true;
+      f.style.transition = 'transform .28s cubic-bezier(.2,.9,.25,1)';
+      if (dx > DONE_AT) {
+        f.style.transform = ''; r.classList.remove('sw-l', 'armed');
+        if (openSwipe === r) openSwipe = null;
+        setTimeout(() => toggleTask(r.dataset.id), 120);
+      } else if (dx < -ACT_W / 2) {
+        f.style.transform = `translateX(${-ACT_W}px)`; r.classList.add('open', 'sw-r'); openSwipe = r;
+      } else {
+        f.style.transform = ''; r.classList.remove('open', 'sw-l', 'sw-r', 'armed');
+        if (openSwipe === r) openSwipe = null;
+      }
+    }
+    mode = null;
+  };
+  list.addEventListener('touchend', end); list.addEventListener('touchcancel', end);
+  list.addEventListener('contextmenu', e => { if (e.target.closest('.task')) e.preventDefault(); });
+  document.addEventListener('click', e => {
+    if (swallow) { swallow = false; e.stopPropagation(); e.preventDefault(); return; }
+    const act = e.target.closest('.sw-right button');
+    if (act) { e.stopPropagation(); e.preventDefault(); const id = act.closest('.task').dataset.id; closeSwipe(); taskAction(act.dataset.act, id); return; }
+    if (openSwipe && !e.target.closest('#sheet')) { closeSwipe(); e.stopPropagation(); e.preventDefault(); }
+  }, true);
+  window.addEventListener('scroll', () => { if (openSwipe) closeSwipe(); }, { passive: true });
+})();
+
 /* ---------- Events ---------- */
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-view],[data-space],[data-page],[data-action],[data-check],[data-edit]');
+  const el = e.target.closest('[data-view],[data-space],[data-action],[data-check],[data-edit],[data-addto],[data-pagemenu]');
   if (!el || el.closest('#sheet')) return;
-  if (el.dataset.view !== undefined && el.dataset.view !== '') { ui.view = el.dataset.view; saveUI(); render(); window.scrollTo(0, 0); }
-  else if (el.dataset.space !== undefined) { ui.view = 'space'; if (ui.spaceId !== el.dataset.space) { ui.spaceId = el.dataset.space; ui.pageId = null; } saveUI(); render(); window.scrollTo(0, 0); }
-  else if (el.dataset.page !== undefined) { ui.pageId = el.dataset.page || null; saveUI(); render(); window.scrollTo(0, 0); }
+  if (el.dataset.view) { ui.view = el.dataset.view; saveUI(); render(); window.scrollTo(0, 0); }
+  else if (el.dataset.space !== undefined) { ui.view = 'space'; if (ui.spaceId !== el.dataset.space) { ui.spaceId = el.dataset.space; addTarget.pageId = null; } saveUI(); render(); window.scrollTo(0, 0); }
   else if (el.dataset.check) toggleTask(el.dataset.check);
   else if (el.dataset.edit) { const t = getTask(el.dataset.edit); if (t) taskSheet(t); }
+  else if (el.dataset.addto !== undefined) focusAdd(el.dataset.addto || null);
+  else if (el.dataset.pagemenu) { const p = getPage(el.dataset.pagemenu); if (p) pageMenu(p); }
   else if (el.dataset.action === 'new-space') spaceSheet(null);
   else if (el.dataset.action === 'new-page') pageSheet(null);
   else if (el.dataset.action === 'toggle-done') { ui.showDone = !ui.showDone; saveUI(); render(); }
 });
 $('#menuBtn').onclick = titleMenu;
-$('#title').onclick = titleMenu;
 $('#syncBtn').onclick = settingsSheet;
 
+/* ---------- Eingabeleiste: tippen versteht Datum, Uhrzeit, Wiederholung ---------- */
+function parseTyped(text) {
+  // Beim Tippen in einem Bereich nur Termin & Wiederholung lesen (Bereich/Seite kommen vom Ort bzw. vom ＋)
+  return TodoParser.parse(text, { spaces: [], pages: [], today: today() });
+}
+function focusAdd(pageId) {
+  if (ui.view !== 'space') return;
+  addTarget.pageId = pageId || null;
+  const inp = $('#addInput');
+  inp.focus();
+  renderList(); updateAddHint();
+}
+function updateAddHint() {
+  const inp = $('#addInput'), hint = $('#addHint');
+  if (!inp || !hint) return;
+  const p = addTarget.pageId && getPage(addTarget.pageId);
+  inp.placeholder = p ? `Neu in ${p.emoji ? p.emoji + ' ' : ''}${p.name}` : 'Neue Erinnerung';
+  const v = inp.value.trim();
+  $('#sendBtn').hidden = !v; $('#micBtn').hidden = !!v;
+  const chips = [];
+  if (v) {
+    const r = parseTyped(v);
+    const due = r.due || (r.repeat ? today() : null);
+    if (due) chips.push(`<span class="hint-chip">${ICON_CAL}${esc(dueInfo({ due, time: r.time }).label)}</span>`);
+    if (r.repeat) chips.push(`<span class="hint-chip">↻ ${esc(TodoParser.repeatLabel(r.repeat))}</span>`);
+  }
+  hint.innerHTML = chips.join('');
+  hint.hidden = !chips.length;
+}
+function addTask(text) {
+  const r = parseTyped(text);
+  const title = r.title || text.trim();
+  const due = r.due || (r.repeat ? today() : null);
+  const t = touch({
+    id: uid('t'), spaceId: ui.spaceId, pageId: addTarget.pageId || null, title, notes: '',
+    due, time: due ? r.time : null, repeat: r.repeat || null,
+    done: false, doneAt: null, createdAt: now(), createdBy: 'user'
+  });
+  db.tasks.push(t); commit();
+}
 $('#addForm').addEventListener('submit', e => {
   e.preventDefault();
   const v = $('#addInput').value.trim(); if (!v) return;
   addTask(v);
   $('#addInput').value = '';
-  addDue = { date: '', time: '' }; $('#addDate').value = ''; $('#addTime').value = '';
-  $('#addOpts').hidden = true; updateAddDate();
+  updateAddHint();
 });
-$('#addDateBtn').onclick = () => { $('#addOpts').hidden = !$('#addOpts').hidden; };
-$$('#addOpts [data-q]').forEach(b => b.onclick = () => {
-  const q = b.dataset.q;
-  addDue.date = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
-  if (q === 'none') addDue.time = '';
-  $('#addDate').value = addDue.date; $('#addTime').value = addDue.time; updateAddDate();
-  $('#addInput').focus();
-});
-$('#addDate').onchange = e => { addDue.date = e.target.value; updateAddDate(); };
-$('#addTime').onchange = e => { addDue.time = e.target.value; if (addDue.time && !addDue.date) { addDue.date = today(); $('#addDate').value = addDue.date; } updateAddDate(); };
-function updateAddDate() {
-  $('#addDateBtn').classList.toggle('set', !!addDue.date);
-  $$('#addOpts [data-q]').forEach(b => {
-    const q = b.dataset.q;
-    const val = q === 'today' ? today() : q === 'tomorrow' ? addDays(1) : q === 'week' ? addDays(7) : '';
-    b.classList.toggle('on', q !== 'none' ? addDue.date === val : !addDue.date);
-  });
-  $('#addInput').placeholder = addDue.date ? `Neue Erinnerung · ${dueInfo({ due: addDue.date, time: addDue.time }).label}` : 'Neue Erinnerung';
-}
+$('#addInput').addEventListener('input', updateAddHint);
 
 /* ---------- Sync (GitHub Contents API) ---------- */
 const configured = () => !!(settings.owner && settings.repo && settings.path && settings.token);

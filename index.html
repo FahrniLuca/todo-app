@@ -18,7 +18,7 @@
 <body>
 <header class="top">
   <div class="topbar">
-    <button id="syncBtn" class="sync" aria-label="Sync und Einstellungen"></button>
+    <button id="syncBtn" class="sync" aria-label="Sync-Status" hidden></button>
     <button id="menuBtn" class="circle-btn" aria-label="Mehr">
       <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
     </button>
@@ -34,27 +34,13 @@
 <main id="list" class="list"></main>
 
 <footer id="addbar" class="addbar">
-  <div id="addOpts" class="add-opts" hidden>
-    <div class="pills">
-      <button type="button" data-q="today">Heute</button>
-      <button type="button" data-q="tomorrow">Morgen</button>
-      <button type="button" data-q="week">Nächste Woche</button>
-      <button type="button" data-q="none">Kein Datum</button>
-    </div>
-    <div class="dt">
-      <label class="dt-field"><span>Datum</span><input type="date" id="addDate"></label>
-      <label class="dt-field"><span>Uhrzeit</span><input type="time" id="addTime"></label>
-    </div>
-  </div>
+  <div id="addHint" class="add-hint" hidden></div>
   <form id="addForm" class="add-form" autocomplete="off">
-    <button type="button" id="addDateBtn" class="tool-btn" aria-label="Termin setzen">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
-    </button>
-    <div class="field"><input id="addInput" type="text" placeholder="Neue Erinnerung" enterkeyhint="done">
-      <button type="button" id="micBtn" class="field-mic" aria-label="Diktieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11.5" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button></div>
-    <button type="submit" class="add-btn" aria-label="Hinzufügen">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-    </button>
+    <div class="field">
+      <input id="addInput" type="text" placeholder="Neue Erinnerung" enterkeyhint="done" aria-label="Neue Erinnerung">
+      <button type="button" id="micBtn" class="field-mic" aria-label="Diktieren"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11.5" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+      <button type="submit" id="sendBtn" class="field-send" aria-label="Hinzufügen" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+    </div>
   </form>
 </footer>
 

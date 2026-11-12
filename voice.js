@@ -173,7 +173,9 @@ function showPreview(text) {
     const st = $('#vStatus'); if (st) st.textContent = 'Das habe ich nicht verstanden. Tippe aufs Mikrofon und versuch es nochmals.';
     return;
   }
-  let spaceId = p.space ? p.space.id : (spaces().find(s => s.name.toLowerCase() === TEMP_NAME.toLowerCase())?.id || '__temp__');
+  const inSpace = ui.view === 'space' && getSpace(ui.spaceId) && !p.unknownSpace;
+  let spaceId = p.space ? p.space.id : inSpace ? ui.spaceId : (spaces().find(s => s.name.toLowerCase() === TEMP_NAME.toLowerCase())?.id || '__temp__');
+  if (!p.space && inSpace && !p.page && typeof addTarget !== 'undefined' && addTarget.pageId) p.page = getPage(addTarget.pageId);
   ov.innerHTML = `<div class="v-top"><button class="nav-btn" id="vClose">Abbrechen</button></div>
     <div class="v-center preview">
       <div class="v-status" id="vStatus">Wird gespeichert …</div>
