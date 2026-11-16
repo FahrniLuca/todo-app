@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.2';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -546,7 +546,7 @@ function spaceSheet(space) {
         if (!name) { nameEl.focus(); return; }
         closeSheet();
         if (isNew) addSpace(name, emoji);
-        else { Object.assign(space, { name, emoji }); touch(space); commit(); }
+        else { const cur = getSpace(space.id) || space; Object.assign(cur, { name, emoji }); touch(cur); commit(); }
       };
       if (!isNew) {
         s.querySelector('#left').onclick = () => moveItem(spaces(), space, -1);
@@ -567,7 +567,7 @@ function pageSheet(page) {
         if (!name) { nameEl.focus(); return; }
         closeSheet();
         if (isNew) addPage(ui.spaceId, name, emoji);
-        else { Object.assign(page, { name, emoji }); touch(page); commit(); }
+        else { const cur = getPage(page.id) || page; Object.assign(cur, { name, emoji }); touch(cur); commit(); }
       };
       if (!isNew) {
         s.querySelector('#left').onclick = () => moveItem(pagesOf(page.spaceId), page, -1);
@@ -600,6 +600,7 @@ function pageMenu(p) {
 /* ---------- Schnelle Aktionen (Wischen / langes Drücken) ---------- */
 const nextWeekend = () => { const d = new Date().getDay(); return addDays(d === 6 ? 7 : (6 - d)); };
 function setDue(t, due, label) {
+  t = getTask(t.id) || t;
   const prev = { due: t.due, time: t.time };
   t.due = due; if (!due) { t.time = null; t.repeat = null; }
   touch(t); commit();
@@ -625,11 +626,13 @@ function moveMenu(t) {
   actionSheet({ title: 'Verschieben nach …', actions });
 }
 function moveTask(t, spaceId, pageId) {
+  t = getTask(t.id) || t;
   const prev = { spaceId: t.spaceId, pageId: t.pageId };
   Object.assign(t, { spaceId, pageId }); touch(t); commit();
   showToast(`→ ${ctxLabel(t)}`, 'Widerrufen', () => { Object.assign(t, prev); touch(t); commit(); }, 4000);
 }
 function deleteTask(t) {
+  t = getTask(t.id) || t;
   touch(Object.assign(t, { deleted: true })); commit();
   showToast('Aufgabe gelöscht', 'Widerrufen', () => { touch(Object.assign(t, { deleted: false })); commit(); }, 5000);
 }
@@ -658,6 +661,8 @@ function pageOptions(spaceId, selected) {
 const SWITCH = (id, on) => `<label class="switch"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span></span></label>`;
 const nextFullHour = () => { const h = (new Date().getHours() + 1) % 24; return `${pad(h)}:00`; };
 function taskSheet(t) {
+  const tid = t.id;
+  const live = () => getTask(tid) || t;          // aktuelles Objekt (falls inzwischen synchronisiert wurde)
   const sp = spaces();
   const curSpace = getSpace(t.spaceId) ? t.spaceId : (sp[0]?.id || '');
   const body = `
@@ -717,14 +722,15 @@ function taskSheet(t) {
       const title = s.querySelector('#tTitle').value.trim(); if (!title) { s.querySelector('#tTitle').focus(); return; }
       const due = dueOn.checked ? (dueEl.value || today()) : null;
       const rv = s.querySelector('#repeat').value;
-      const repeat = due ? (rv === 'custom' ? t.repeat : repeatFromValue(rv)) : null;
-      Object.assign(t, {
+      const repeat = due ? (rv === 'custom' ? live().repeat : repeatFromValue(rv)) : null;
+      const cur = live();
+      Object.assign(cur, {
         title, notes: s.querySelector('#notes').value.trim(), due, time: due && timeOn.checked ? (timeEl.value || null) : null, repeat,
-        spaceId: s.querySelector('#space').value || t.spaceId, pageId: s.querySelector('#page').value || null
+        spaceId: s.querySelector('#space').value || cur.spaceId, pageId: s.querySelector('#page').value || null
       });
-      touch(t); closeSheet(); commit();
+      touch(cur); closeSheet(); commit();
     };
-    s.querySelector('#del').onclick = () => { closeSheet(); deleteTask(t); };
+    s.querySelector('#del').onclick = () => { closeSheet(); deleteTask(live()); };
   });
 }
 
@@ -805,7 +811,7 @@ function settingsSheet() {
     s.querySelector('#imp').onclick = () => s.querySelector('#impFile').click();
     s.querySelector('#impFile').onchange = async e => {
       const f = e.target.files[0]; if (!f) return;
-      try { const data = normalize(JSON.parse(await f.text())); db = mergeData(db, data); closeSheet(); commit(); showToast('Import zusammengeführt'); }
+      try { const data = normalize(JSON.parse(await f.text())); applyMerged(mergeData(db, data)); closeSheet(); commit(); showToast('Import zusammengeführt'); }
       catch (err) { showToast('Datei ist kein gültiges JSON'); }
     };
   });
@@ -1025,6 +1031,19 @@ function mergeData(a, b) {
   }
   return out;
 }
+// Übernimmt einen zusammengeführten Stand, OHNE die bestehenden Objekte zu ersetzen.
+// Wichtig, weil offene Fenster (Details, Menüs) ihre Aufgabe als Objekt festhalten.
+function applyMerged(next) {
+  for (const k of ['spaces', 'pages', 'tasks']) {
+    const old = new Map((db[k] || []).map(x => [x.id, x]));
+    db[k] = (next[k] || []).map(n => {
+      const o = old.get(n.id);
+      if (!o || o === n) return n;
+      for (const key of Object.keys(o)) if (!(key in n)) delete o[key];
+      return Object.assign(o, n);
+    });
+  }
+}
 function serialize(d) {
   const sortById = arr => [...arr].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   return JSON.stringify({ schema: 1, spaces: sortById(d.spaces), pages: sortById(d.pages), tasks: sortById(d.tasks) }, null, 2) + '\n';
@@ -1098,7 +1117,7 @@ async function runSync() {
         if (res.status === 409 || res.status === 422) { await new Promise(r => setTimeout(r, 400 * (attempt + 1))); continue; }
         if (!res.ok) throw new Error(await errText(res));
       }
-      db = mergeData(db, merged);   // lokale Änderungen während des Syncs bleiben erhalten (neuerer Zeitstempel gewinnt)
+      applyMerged(mergeData(db, merged));   // lokale Änderungen während des Syncs bleiben erhalten (neuerer Zeitstempel gewinnt)
       done = true;
     }
     if (!done) throw new Error('Konflikt beim Speichern – bitte nochmals versuchen.');
