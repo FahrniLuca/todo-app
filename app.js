@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '2.3';
+const APP_VERSION = '2.4';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -41,7 +41,8 @@ const pagesOf = sid => alive(db.pages).filter(p => p.spaceId === sid).sort(byOrd
 const getSpace = id => db.spaces.find(s => s.id === id && !s.deleted);
 const getPage = id => db.pages.find(p => p.id === id && !p.deleted);
 const getTask = id => db.tasks.find(t => t.id === id);
-const isOrphan = t => !getSpace(t.spaceId) || (t.pageId && !getPage(t.pageId));
+const effPage = t => { const p = t.pageId && getPage(t.pageId); return p && p.spaceId === t.spaceId ? p.id : null; };
+const isOrphan = t => !getSpace(t.spaceId);
 
 function saveUI() { LS.set(UI_KEY, ui); }
 function commit() {
@@ -196,6 +197,7 @@ function render() {
   const inSpace = ui.view === 'space' && !!ui.spaceId;
   $('#addbar').hidden = !inSpace;
   $('#fab').hidden = inSpace;
+  $('#app').classList.toggle('fab-on', !inSpace);
   updateAddHint();
 }
 
@@ -266,7 +268,7 @@ function taskHTML(t, ctx) {
     </div></div>`;
 }
 function ctxLabel(t) {
-  const s = getSpace(t.spaceId), p = t.pageId && getPage(t.pageId);
+  const s = getSpace(t.spaceId), p = effPage(t) && getPage(t.pageId);
   return s ? `${s.emoji || ''} ${s.name}${p ? ' › ' + p.name : ''}`.trim() : '';
 }
 const group = (items, ctx) => items.length ? `<div class="group">${items.map(t => taskHTML(t, ctx ? ctxLabel(t) : null)).join('')}</div>` : '';
@@ -376,7 +378,7 @@ function renderList() {
     for (const sp of spaces()) {
       const lists = [{ p: null }, ...pagesOf(sp.id).map(p => ({ p }))];
       for (const { p } of lists) {
-        const items = shown.filter(t => t.spaceId === sp.id && (t.pageId || null) === (p ? p.id : null) && !isOrphan(t)).sort(sortTasks);
+        const items = shown.filter(t => t.spaceId === sp.id && effPage(t) === (p ? p.id : null) && !isOrphan(t)).sort(sortTasks);
         if (!items.length) continue;
         out += `<div class="section-h">${esc(sp.emoji || '')} ${esc(sp.name)}${p ? ' › ' + (p.emoji ? esc(p.emoji) + ' ' : '') + esc(p.name) : ''}</div>` + group(items);
       }
@@ -410,7 +412,7 @@ function renderList() {
   const pages = pagesOf(sid);
   const shown = scope.filter(t => ui.showDone || visible(t));
   const sectionHead = (p) => {
-    const items = scope.filter(t => (t.pageId || null) === (p ? p.id : null));
+    const items = scope.filter(t => effPage(t) === (p ? p.id : null));
     const n = openCount(items);
     const target = !!p && addTarget.pageId === p.id;
     return `<div class="page-h ${target && pages.length ? 'target' : ''}">
@@ -425,7 +427,7 @@ function renderList() {
     html = list.length ? '<div style="height:8px"></div>' + group(list) : emptyState('Alles erledigt', 'Neue Erinnerungen fügst du unten hinzu.');
   } else {
     for (const p of [null, ...pages]) {
-      const list = shown.filter(t => (t.pageId || null) === (p ? p.id : null)).sort(sortTasks);
+      const list = shown.filter(t => effPage(t) === (p ? p.id : null)).sort(sortTasks);
       if (!p && !list.length) continue;      // leeres „Allgemein“ nicht anzeigen
       html += sectionHead(p) + (list.length ? group(list) : `<div class="group empty-sec"><button class="empty-row" data-addto="${p ? esc(p.id) : ''}">Keine Aufgaben – tippen zum Hinzufügen</button></div>`);
     }
@@ -445,7 +447,7 @@ function showToast(msg, actionLabel, action, ms = 3000) {
   const t = $('#toast');
   t.innerHTML = `<span>${esc(msg)}</span>` + (actionLabel ? `<button>${esc(actionLabel)}</button>` : '');
   t.hidden = false;
-  const bar = $('#addbar'); t.style.bottom = ((bar.hidden ? 0 : bar.offsetHeight) + 14) + 'px';
+  const bar = $('#addbar'); t.style.bottom = bar.hidden ? 'calc(env(safe-area-inset-bottom) + 104px)' : (bar.offsetHeight + 12) + 'px';
   if (actionLabel) t.querySelector('button').onclick = () => { hideToast(); action(); };
   clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, ms);
 }
@@ -900,6 +902,27 @@ function settingsSheet() {
   list.addEventListener('contextmenu', e => { if (e.target.closest('.row[data-space]')) e.preventDefault(); });
 })();
 
+/* ---------- Sichtbarer Bereich (Tastatur) ----------
+   iOS verschiebt bei offener Tastatur die ganze Seite. Das App-Gerüst folgt deshalb
+   dem sichtbaren Ausschnitt (visualViewport), damit die Eingabeleiste immer über der Tastatur bleibt. */
+(function viewportFix() {
+  const app = $('#app'), root = document.documentElement, vv = window.visualViewport;
+  const apply = () => {
+    const h = vv ? vv.height : window.innerHeight;
+    root.style.setProperty('--app-h', Math.round(h) + 'px');
+    root.style.setProperty('--vv-top', Math.round(vv ? vv.offsetTop : 0) + 'px');
+    app.classList.toggle('kb', !!vv && window.innerHeight - vv.height > 120);
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+  };
+  apply();
+  if (vv) { vv.addEventListener('resize', apply); vv.addEventListener('scroll', apply); }
+  window.addEventListener('resize', apply);
+  window.addEventListener('orientationchange', () => setTimeout(apply, 350));
+  window.addEventListener('scroll', () => { if (window.scrollY) window.scrollTo(0, 0); }, { passive: true });
+  document.addEventListener('focusout', () => setTimeout(apply, 60));
+})();
+const scrollTop = () => { $('#scroller').scrollTop = 0; };
+
 /* ---------- Wischgesten & langes Drücken auf Aufgaben ----------
    → nach rechts: erledigt / wieder offen   ← nach links: Datum · Verschieben · Löschen
    langes Drücken: Kontextmenü */
@@ -970,15 +993,15 @@ function closeSwipe(instant) {
     if (act) { e.stopPropagation(); e.preventDefault(); const id = act.closest('.task').dataset.id; closeSwipe(); taskAction(act.dataset.act, id); return; }
     if (openSwipe && !e.target.closest('#sheet')) { closeSwipe(); e.stopPropagation(); e.preventDefault(); }
   }, true);
-  window.addEventListener('scroll', () => { if (openSwipe) closeSwipe(); }, { passive: true });
+  $('#scroller').addEventListener('scroll', () => { if (openSwipe) closeSwipe(); }, { passive: true });
 })();
 
 /* ---------- Events ---------- */
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-view],[data-space],[data-action],[data-check],[data-edit],[data-addto],[data-pagemenu]');
   if (!el || el.closest('#sheet')) return;
-  if (el.dataset.view) { ui.view = el.dataset.view; saveUI(); render(); window.scrollTo(0, 0); }
-  else if (el.dataset.space !== undefined) { ui.view = 'space'; if (ui.spaceId !== el.dataset.space) { ui.spaceId = el.dataset.space; addTarget.pageId = null; } saveUI(); render(); window.scrollTo(0, 0); }
+  if (el.dataset.view) { ui.view = el.dataset.view; saveUI(); render(); scrollTop(); }
+  else if (el.dataset.space !== undefined) { ui.view = 'space'; if (ui.spaceId !== el.dataset.space) { ui.spaceId = el.dataset.space; addTarget.pageId = null; } saveUI(); render(); scrollTop(); }
   else if (el.dataset.check) toggleTask(el.dataset.check);
   else if (el.dataset.edit) { const t = getTask(el.dataset.edit); if (t) taskSheet(t); }
   else if (el.dataset.addto !== undefined) focusAdd(el.dataset.addto || null);
@@ -1172,7 +1195,13 @@ window.addEventListener('offline', () => { sync.status = 'offline'; render(); })
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { render(); runSync(); } });
 setInterval(() => { if (document.visibilityState === 'visible') runSync(); }, 60000);
 // Mitternacht / Fälligkeiten aktualisieren
-setInterval(() => { if (!pendingHide.size && $('#sheetWrap').hidden) renderHeader(); }, 60000);
+let shownDay = today();
+setInterval(() => {
+  if (!pendingHide.size && $('#sheetWrap').hidden && $('#voice').hidden && !openSwipe && document.activeElement !== $('#addInput')) {
+    if (today() !== shownDay) { shownDay = today(); render(); } else renderHeader();
+  }
+}, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && today() !== shownDay) { shownDay = today(); render(); } });
 
 /* ---------- Push-Mitteilungen ----------
    Das Abo dieses Geräts wird in push/subscriptions.json im Daten-Repo gespeichert.

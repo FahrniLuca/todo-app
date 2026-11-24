@@ -333,7 +333,6 @@ svg { display: block; }
 }
 .fab svg { width: 30px; height: 30px; }
 .fab:active { transform: scale(.92); }
-body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bottom) + 120px); }
 
 /* ---------- Diktier-Bildschirm ---------- */
 .voice {
@@ -525,3 +524,24 @@ body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bo
 .seg button.on { background: var(--surface-3); box-shadow: 0 2px 6px rgba(0,0,0,.35); }
 .seg button[data-p="3"].on { color: var(--red); } .seg button[data-p="2"].on { color: var(--orange); }
 .hint-chip.prio-chip { background: rgba(255,69,58,.2); color: var(--red); }
+
+/* ================= Version 2.4: festes App-Gerüst =================
+   Nur die Liste scrollt. Eingabeleiste und Mikrofon-Knopf sind Teil des Gerüsts
+   (nicht position:fixed auf der Seite) und folgen dem sichtbaren Bereich über der Tastatur. */
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+body { min-height: 0; }
+.app {
+  position: fixed; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--app-h, 100%);
+  display: flex; flex-direction: column; background: var(--bg);
+  padding-top: env(safe-area-inset-top);
+}
+.scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; position: relative; }
+.top { padding-top: 6px; }
+.nav-sticky { padding-top: 0; margin-top: 0; }
+.addbar { position: relative; left: auto; right: auto; bottom: auto; flex-shrink: 0; }
+.app.kb .addbar { padding-bottom: 8px; }
+.fab { position: absolute; }
+.toast { position: absolute; }
+.list { padding-bottom: 28px; }
+.app.fab-on .list { padding-bottom: calc(env(safe-area-inset-bottom) + 110px); }
+.sheet-wrap, .voice { inset: auto; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--app-h, 100%); }
