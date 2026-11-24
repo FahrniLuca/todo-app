@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '2.2';
+const APP_VERSION = '2.3';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -83,6 +83,7 @@ function sortTasks(a, b) {
   if (ad0 !== bd0) return ad0 ? 1 : -1;
   const ad = a.due ? a.due + (a.time || '99:99') : '9999', bd = b.due ? b.due + (b.time || '99:99') : '9999';
   if (ad !== bd) return ad < bd ? -1 : 1;
+  if ((b.priority || 0) !== (a.priority || 0)) return (b.priority || 0) - (a.priority || 0);
   return (a.createdAt ?? 0) - (b.createdAt ?? 0);
 }
 
@@ -145,7 +146,7 @@ function toggleTask(id) {
       const nextDue = TodoParser.nextOccurrence(t.due, t.repeat, today());
       const n = touch({
         id: uid('t'), spaceId: t.spaceId, pageId: t.pageId || null, title: t.title, notes: t.notes || '',
-        due: nextDue, time: t.time || null, repeat: TodoParser.carryRepeat(t.due, t.repeat), done: false, doneAt: null,
+        due: nextDue, time: t.time || null, repeat: TodoParser.carryRepeat(t.due, t.repeat), priority: t.priority || 0, done: false, doneAt: null,
         createdAt: now(), createdBy: t.createdBy || 'user', repeatOf: t.repeatOf || t.id
       });
       db.tasks.push(n); t.nextId = n.id;
@@ -174,7 +175,7 @@ function toggleTask(id) {
 
 /* ---------- Rendering ---------- */
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-const VIEWS = ['home', 'today', 'planned', 'all', 'done', 'inbox', 'space'];
+const VIEWS = ['home', 'today', 'planned', 'all', 'done', 'inbox', 'space', 'prio'];
 let addTarget = { pageId: null };     // Seite, in die getippte Aufgaben kommen (per ＋ im Abschnitt)
 
 function ensureValidView() {
@@ -212,7 +213,7 @@ function renderHeader() {
   $('#spaces').innerHTML = html;
   $('#pages').innerHTML = '';
 
-  const TITLES = { home: 'Übersicht', today: 'Heute', planned: 'Geplant', all: 'Alle', done: 'Erledigt', inbox: 'Eingang' };
+  const TITLES = { prio: 'Priorisiert', home: 'Übersicht', today: 'Heute', planned: 'Geplant', all: 'Alle', done: 'Erledigt', inbox: 'Eingang' };
   let title = TITLES[ui.view] || 'Erinnerungen';
   if (ui.view === 'space') { const s = getSpace(ui.spaceId); title = `${esc(s.emoji || '')} ${esc(s.name)}`.trim(); }
   $('#title').innerHTML = title;
@@ -259,7 +260,7 @@ function taskHTML(t, ctx) {
     <div class="task-fg">
       <button class="check" data-check="${id}" aria-label="${t.done ? 'Als offen markieren' : 'Erledigt'}">${CHECK_SVG}</button>
       <button class="task-body" data-edit="${id}">
-        <div class="task-title">${esc(t.title)}</div>
+        <div class="task-title">${t.priority ? `<span class="prio p${t.priority}">${'!'.repeat(t.priority)}</span> ` : ''}${esc(t.title)}</div>
         ${meta.length ? `<div class="meta">${meta.join('')}</div>` : ''}
       </button>${cd}
     </div></div>`;
@@ -298,7 +299,13 @@ function homeHTML(tasks) {
       ${tile('all', '#636366', open.length, 'Alle', 'all')}
       ${tile('done', 'var(--green)', doneN, 'Erledigt', 'done')}
     </div>`;
-  const focus = tasks.filter(t => !isOrphan(t) && t.due && t.due <= td && visible(t)).sort(sortTasks);
+  const byPrio = (a, b) => (b.priority || 0) - (a.priority || 0) || sortTasks(a, b);
+  const prio = tasks.filter(t => !isOrphan(t) && t.priority > 0 && visible(t)).sort(byPrio);
+  if (prio.length) {
+    html += `<div class="section-h">Priorisiert</div>` + group(prio.slice(0, 8), true);
+    if (prio.length > 8) html += `<button class="done-toggle" data-view="prio">Alle ${prio.length} anzeigen</button>`;
+  }
+  const focus = tasks.filter(t => !isOrphan(t) && t.due && t.due <= td && !(t.priority > 0) && visible(t)).sort(sortTasks);
   if (focus.length) {
     html += `<div class="section-h">Heute</div>` + group(focus.slice(0, 6), true);
     if (focus.length > 6) html += `<button class="done-toggle" data-view="today">Alle ${focus.length} anzeigen</button>`;
@@ -342,6 +349,15 @@ function renderList() {
     if (over.length) html += `<div class="section-h red">Überfällig</div>` + group(over, true);
     if (tod.length) html += `<div class="section-h">Heute</div>` + group(tod, true);
     el.innerHTML = html || emptyState('Nichts fällig', 'Geniess den Tag.');
+    return;
+  }
+  if (ui.view === 'prio') {
+    let html = '';
+    for (const [lvl, name] of [[3, 'Hoch'], [2, 'Mittel'], [1, 'Niedrig']]) {
+      const list = tasks.filter(t => !isOrphan(t) && (t.priority || 0) === lvl && visible(t)).sort(sortTasks);
+      if (list.length) html += `<div class="section-h">${name}</div>` + group(list, true);
+    }
+    el.innerHTML = html || emptyState('Nichts priorisiert', 'Lange auf eine Aufgabe drücken → Priorität.');
     return;
   }
   if (ui.view === 'planned') {
@@ -636,6 +652,16 @@ function deleteTask(t) {
   touch(Object.assign(t, { deleted: true })); commit();
   showToast('Aufgabe gelöscht', 'Widerrufen', () => { touch(Object.assign(t, { deleted: false })); commit(); }, 5000);
 }
+const PRIO_NAMES = ['Keine', 'Niedrig  !', 'Mittel  !!', 'Hoch  !!!'];
+function setPriority(t, lvl) {
+  t = getTask(t.id) || t;
+  const prev = t.priority || 0;
+  t.priority = lvl; touch(t); commit();
+  showToast(lvl ? `Priorität ${PRIO_NAMES[lvl].replace(/\s+!+/, '')}` : 'Priorität entfernt', 'Widerrufen', () => { const c = getTask(t.id) || t; c.priority = prev; touch(c); commit(); }, 4000);
+}
+function prioMenu(t) {
+  actionSheet({ title: 'Priorität', actions: [3, 2, 1, 0].map(l => ({ label: PRIO_NAMES[l] + ((t.priority || 0) === l ? '  ✓' : ''), run: () => setPriority(t, l) })) });
+}
 function taskAction(act, id) {
   const t = getTask(id); if (!t) return;
   if (act === 'date') dateMenu(t);
@@ -650,6 +676,7 @@ function contextMenu(id) {
     { label: 'Heute', run: () => setDue(t, today()) },
     { label: 'Morgen', run: () => setDue(t, addDays(1)) },
     { label: 'Datum …', run: () => dateMenu(t) },
+    { label: 'Priorität …', run: () => prioMenu(t) },
     { label: 'Verschieben …', run: () => moveMenu(t) },
     { label: 'Löschen', danger: true, run: () => deleteTask(t) }
   ] });
@@ -684,6 +711,8 @@ function taskSheet(t) {
       <div class="cell detail" id="timeRow"><div class="row-input"><span>Erinnern um</span><input type="time" id="time" value="${esc(t.time || '')}"></div></div>
       <label class="cell" id="repRow"><span class="cell-ic" style="background:#636366"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3.5l3 3-3 3"/><path d="M4 11.5V10a3.5 3.5 0 0 1 3.5-3.5H20"/><path d="M7 20.5l-3-3 3-3"/><path d="M20 12.5V14a3.5 3.5 0 0 1-3.5 3.5H4"/></svg></span><span class="lbl">Wiederholen</span><select id="repeat">${repeatOptions(t.repeat)}</select>${CHEV}</label>
     </div>
+    <div class="section-h">Priorität</div>
+    <div class="form"><div class="cell"><div class="seg" id="prio">${[0, 1, 2, 3].map(l => `<button type="button" data-p="${l}" class="${(t.priority || 0) === l ? 'on' : ''}">${l ? '!'.repeat(l) : 'Keine'}</button>`).join('')}</div></div></div>
     <div class="section-h">Liste</div>
     <div class="form">
       <label class="cell"><span class="lbl">Bereich</span><select id="space">${sp.map(s => `<option value="${esc(s.id)}" ${s.id === curSpace ? 'selected' : ''}>${esc((s.emoji || '') + ' ' + s.name)}</option>`).join('')}</select>${CHEV}</label>
@@ -717,6 +746,8 @@ function taskSheet(t) {
     dueEl.onchange = refresh; timeEl.onchange = refresh;
     s.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { dueEl.value = qv(b.dataset.q); refresh(); });
     refresh();
+    let prioVal = t.priority || 0;
+    s.querySelectorAll('#prio [data-p]').forEach(bt => bt.onclick = () => { prioVal = +bt.dataset.p; s.querySelectorAll('#prio [data-p]').forEach(x => x.classList.toggle('on', x === bt)); });
     s.querySelector('#space').onchange = e => s.querySelector('#page').innerHTML = pageOptions(e.target.value, null);
     s.querySelector('#save').onclick = () => {
       const title = s.querySelector('#tTitle').value.trim(); if (!title) { s.querySelector('#tTitle').focus(); return; }
@@ -725,7 +756,7 @@ function taskSheet(t) {
       const repeat = due ? (rv === 'custom' ? live().repeat : repeatFromValue(rv)) : null;
       const cur = live();
       Object.assign(cur, {
-        title, notes: s.querySelector('#notes').value.trim(), due, time: due && timeOn.checked ? (timeEl.value || null) : null, repeat,
+        title, notes: s.querySelector('#notes').value.trim(), due, time: due && timeOn.checked ? (timeEl.value || null) : null, repeat, priority: prioVal,
         spaceId: s.querySelector('#space').value || cur.spaceId, pageId: s.querySelector('#page').value || null
       });
       touch(cur); closeSheet(); commit();
@@ -984,6 +1015,7 @@ function updateAddHint() {
     const due = r.due || (r.repeat ? today() : null);
     if (due) chips.push(`<span class="hint-chip">${ICON_CAL}${esc(dueInfo({ due, time: r.time }).label)}</span>`);
     if (r.repeat) chips.push(`<span class="hint-chip">↻ ${esc(TodoParser.repeatLabel(r.repeat))}</span>`);
+    if (r.priority) chips.push(`<span class="hint-chip prio-chip">${'!'.repeat(r.priority)} ${['', 'Niedrig', 'Mittel', 'Hoch'][r.priority]}</span>`);
   }
   hint.innerHTML = chips.join('');
   hint.hidden = !chips.length;
@@ -994,7 +1026,7 @@ function addTask(text) {
   const due = r.due || (r.repeat ? today() : null);
   const t = touch({
     id: uid('t'), spaceId: ui.spaceId, pageId: addTarget.pageId || null, title, notes: '',
-    due, time: due ? r.time : null, repeat: r.repeat || null,
+    due, time: due ? r.time : null, repeat: r.repeat || null, priority: r.priority || 0,
     done: false, doneAt: null, createdAt: now(), createdBy: 'user'
   });
   db.tasks.push(t); commit();

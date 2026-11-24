@@ -27,7 +27,7 @@ if (!space) {
 }
 const task = {
   id: uid('t'), spaceId: space.id, pageId: r.page ? r.page.id : null, title: r.title, notes: '',
-  due: r.due || null, time: r.due ? r.time : null, repeat: r.repeat || null,
+  due: r.due || null, time: r.due ? r.time : null, repeat: r.repeat || null, priority: r.priority || 0,
   done: false, doneAt: null, createdAt: now, createdBy: 'siri', updatedAt: now
 };
 db.tasks.push(task);

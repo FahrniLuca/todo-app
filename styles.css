@@ -513,3 +513,15 @@ body:has(.fab:not([hidden])) .list { padding-bottom: calc(env(safe-area-inset-bo
 /* Action-Sheet: lange Listen scrollbar, eingerückte Seiten */
 .sheet.plain .action-group:first-child { max-height: calc(100dvh - 200px); overflow-y: auto; }
 .action-group button.indent { font-size: 18px; color: var(--label); }
+
+/* Prioritäten */
+.prio { font-weight: 700; letter-spacing: 0; }
+.prio.p3 { color: var(--red); }
+.prio.p2 { color: var(--orange); }
+.prio.p1 { color: var(--label-2); }
+.task.done .prio { color: var(--label-3); }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; width: 100%; margin: 8px 0; padding: 2px; border-radius: 9px; background: var(--fill); }
+.seg button { height: 32px; border-radius: 7px; font-size: 15px; font-weight: 600; color: var(--label); }
+.seg button.on { background: var(--surface-3); box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.seg button[data-p="3"].on { color: var(--red); } .seg button[data-p="2"].on { color: var(--orange); }
+.hint-chip.prio-chip { background: rgba(255,69,58,.2); color: var(--red); }

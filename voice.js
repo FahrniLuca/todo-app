@@ -19,12 +19,12 @@ function ensureTempSpace() {
   return t;
 }
 
-function createTask({ title, spaceId, pageId, due, time, repeat }) {
+function createTask({ title, spaceId, pageId, due, time, repeat, priority }) {
   const space = spaceId === '__temp__' || !getSpace(spaceId) ? ensureTempSpace() : getSpace(spaceId);
   const page = pageId && getPage(pageId) && getPage(pageId).spaceId === space.id ? getPage(pageId) : null;
   const t = touch({
     id: uid('t'), spaceId: space.id, pageId: page ? page.id : null, title, notes: '',
-    due: due || (repeat ? today() : null), time: (due || repeat) && time ? time : null, repeat: repeat || null,
+    due: due || (repeat ? today() : null), time: (due || repeat) && time ? time : null, repeat: repeat || null, priority: priority || 0,
     done: false, doneAt: null, createdAt: now(), createdBy: 'voice'
   });
   db.tasks.push(t); commit();
@@ -34,7 +34,7 @@ function createTask({ title, spaceId, pageId, due, time, repeat }) {
 function addFromVoice(text) {
   const p = parseVoice(text);
   if (!p.title) return null;
-  const r = createTask({ title: p.title, spaceId: p.space ? p.space.id : '__temp__', pageId: p.page ? p.page.id : null, due: p.due, time: p.time, repeat: p.repeat });
+  const r = createTask({ title: p.title, spaceId: p.space ? p.space.id : '__temp__', pageId: p.page ? p.page.id : null, due: p.due, time: p.time, repeat: p.repeat, priority: p.priority });
   return Object.assign(r, { unknownSpace: p.unknownSpace });
 }
 
@@ -220,7 +220,7 @@ function showPreview(text) {
     const title = $('#pTitle').value.trim();
     if (!title) { pause(); $('#pTitle').focus(); return; }
     const due = $('#pDue').value || null;
-    const r = createTask({ title, spaceId: $('#pSpace').value, pageId: $('#pPage').value || null, due, time: $('#pTime').value || null, repeat: repeatFromValue($('#pRepeat').value) });
+    const r = createTask({ title, spaceId: $('#pSpace').value, pageId: $('#pPage').value || null, due, time: $('#pTime').value || null, repeat: repeatFromValue($('#pRepeat').value), priority: p.priority || 0 });
     showSaved(r);
   }
   $('#vSave').onclick = save;

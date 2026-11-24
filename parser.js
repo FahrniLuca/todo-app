@@ -89,6 +89,12 @@
     else if (cut(new RegExp(`${L}(?:jeden\\s+monat|monatlich)${R}`, 'iu'))) repeat = { freq: 'monthly', interval: 1 };
     else if (cut(new RegExp(`${L}(?:jedes\\s+jahr|jährlich|jaehrlich)${R}`, 'iu'))) repeat = { freq: 'yearly', interval: 1 };
 
+    /* Priorität: „dringend“/„sehr wichtig“/„!!!“ = hoch, „wichtig“/„!!“ = mittel, „!“ = niedrig */
+    let priority = 0;
+    if (cut(new RegExp(`${L}(?:dringend|sehr\\s+wichtig|hohe\\s+priorität|hohe\\s+prioritaet|priorität\\s+hoch)${R}`, 'iu')) || cut(/(?:^|\s)!!!(?=\s|$)/u)) priority = 3;
+    else if (cut(new RegExp(`${L}(?:wichtig|mittlere\\s+priorität|priorität\\s+mittel)${R}`, 'iu')) || cut(/(?:^|\s)!!(?=\s|$)/u)) priority = 2;
+    else if (cut(new RegExp(`${L}(?:niedrige\\s+priorität|priorität\\s+niedrig)${R}`, 'iu')) || cut(/(?:^|\s)!(?=\s|$)/u)) priority = 1;
+
     /* Uhrzeit */
     m = cut(new RegExp(`${L}(?:um|ab|gegen)\\s+(\\d{1,2})(?:[:.](\\d{2})|\\s+uhr(?:\\s+(\\d{1,2}))?)?(?:\\s+uhr)?${R}`, 'iu'))
       || cut(new RegExp(`${L}(\\d{1,2})(?:[:.](\\d{2}))?\\s+uhr(?:\\s+(\\d{1,2}))?${R}`, 'iu'));
@@ -161,7 +167,7 @@
     s = s.replace(/\s+/g, ' ').replace(/^[\s,:;.\-–]+|[\s,:;.\-–]+$/g, '');
     s = s.replace(/(\p{L}+)zu(rufen|machen|kaufen|holen|bringen|zahlen|schicken|senden|bestellen|räumen|putzen|waschen|wechseln|melden|buchen)$/iu, '$1$2');
     const title = s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
-    return { title, due, time, repeat, space, page, unknownSpace };
+    return { title, due, time, repeat, priority, space, page, unknownSpace };
   }
 
   // Wiederholung für die nächste Instanz (inkl. gemerktem Monatstag)
