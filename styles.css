@@ -545,3 +545,8 @@ body { min-height: 0; }
 .list { padding-bottom: 28px; }
 .app.fab-on .list { padding-bottom: calc(env(safe-area-inset-bottom) + 110px); }
 .sheet-wrap, .voice { inset: auto; left: 0; right: 0; top: var(--vv-top, 0px); height: var(--app-h, 100%); }
+
+/* Version 2.5: Fenster passen sich dem sichtbaren Bereich an (Tastatur) */
+.sheet { max-height: calc(100% - env(safe-area-inset-top) - 8px); }
+@media (min-width: 640px) { .sheet { max-height: 86%; } }
+html.kb .sheet { max-height: calc(100% - 6px); }

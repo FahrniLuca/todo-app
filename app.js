@@ -4,7 +4,7 @@
    privaten GitHub-Repo (damit auch Claude Aufgaben eintragen kann).
    ========================================================================= */
 
-const APP_VERSION = '2.4';
+const APP_VERSION = '2.5';
 const HIDE_AFTER_MS = 5000;           // Erledigte verschwinden nach 5 s
 const TOMBSTONE_TTL = 60 * 864e5;     // Gelöschte Einträge nach 60 Tagen entfernen
 const DATA_KEY = 'todo.data', SET_KEY = 'todo.settings', UI_KEY = 'todo.ui', SYNC_KEY = 'todo.sync';
@@ -911,7 +911,11 @@ function settingsSheet() {
     const h = vv ? vv.height : window.innerHeight;
     root.style.setProperty('--app-h', Math.round(h) + 'px');
     root.style.setProperty('--vv-top', Math.round(vv ? vv.offsetTop : 0) + 'px');
-    app.classList.toggle('kb', !!vv && window.innerHeight - vv.height > 120);
+    const kb = !!vv && window.innerHeight - vv.height > 120;
+    app.classList.toggle('kb', kb); root.classList.toggle('kb', kb);
+    // Bearbeitetes Feld in Fenstern/Overlays in den sichtbaren Teil holen
+    const a = document.activeElement;
+    if (kb && a && a.closest && a.closest('.sheet-body, .v-kb, .v-center')) setTimeout(() => { try { a.scrollIntoView({ block: 'nearest' }); } catch (e) { } }, 50);
     if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
   };
   apply();
